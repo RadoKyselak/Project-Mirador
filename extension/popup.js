@@ -1,12 +1,9 @@
-// popup.js
-const BACKEND_URL = "https://your-project.vercel.app/verify"; // Replace with your actual Vercel deployment URL
+const BACKEND_URL = "https://stelthar-api.vercel.app/";
 
 document.addEventListener("DOMContentLoaded", () => {
   const claimEl = document.getElementById("claim");
   const resultEl = document.getElementById("result");
   const btn = document.getElementById("verifyBtn");
-
-  // load claim from storage
   chrome.storage.local.get(["stelthar_last_claim"], (data) => {
     const c = data.stelthar_last_claim;
     if (c) {
@@ -31,7 +28,7 @@ document.addEventListener("DOMContentLoaded", () => {
           body: JSON.stringify({claim})
         });
         const j = await resp.json();
-        // Pretty render
+        
         resultEl.innerHTML = `
           <div class="verdict">Verdict: ${j.verdict} (confidence: ${j.confidence})</div>
           <div style="margin-top:8px;"><strong>Normalized:</strong> ${j.claim_normalized}</div>
@@ -45,3 +42,4 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   };
 });
+

@@ -1,0 +1,21 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8"/>
+    <title>Stelthar</title>
+    <style>
+      body { font-family: Arial, sans-serif; width:360px; padding:10px; }
+      #claim { font-size: 13px; margin-bottom:8px; }
+      .verdict { font-weight:700; margin-top:8px; }
+      .source { font-size:12px; margin-top:6px; }
+      .spinner { display:inline-block; }
+    </style>
+  </head>
+  <body>
+    <div id="claim">No claim detected. Highlight text on a page and click "Verify".</div>
+    <button id="verifyBtn">Verify highlighted claim</button>
+    <div id="result" style="margin-top:10px;"></div>
+
+    <script src="popup.js"></script>
+  </body>
+</html>

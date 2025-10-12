@@ -18,9 +18,7 @@ app.add_middleware(
 )
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-BEA_API_KEY = os.getenv("BEA_API_KEY")
-CENSUS_API_KEY = os.getenv("CENSUS_API_KEY")
-CONGRESS_API_KEY = os.getenv("CONGRESS_API_KEY")
+DATA_GOV_API_KEY = os.getenv("DATA_GOV_API_KEY")
 
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
 GEMINI_ENDPOINT = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
@@ -240,3 +238,4 @@ async def verify(req: VerifyRequest):
         "summary": summary,
         "sources": sources_results
     }
+

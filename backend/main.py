@@ -9,25 +9,22 @@ from urllib.parse import urlencode
 
 app = FastAPI()
 
-# Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allows all origins in development
+    allow_origins=["*"],
     allow_credentials=True,
-    allow_methods=["*"],  # Allows all methods
-    allow_headers=["*"],  # Allows all headers
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
-# --- Config from ENV ---
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")  # required
-BEA_API_KEY = os.getenv("BEA_API_KEY")  # optional
-CENSUS_API_KEY = os.getenv("CENSUS_API_KEY")  # optional
-CONGRESS_API_KEY = os.getenv("CONGRESS_API_KEY")  # optional
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+BEA_API_KEY = os.getenv("BEA_API_KEY")
+CENSUS_API_KEY = os.getenv("CENSUS_API_KEY")
+CONGRESS_API_KEY = os.getenv("CONGRESS_API_KEY")
 
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
 GEMINI_ENDPOINT = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
 
-# --- Pydantic schemas ---
 class VerifyRequest(BaseModel):
     claim: str
 
@@ -36,12 +33,7 @@ class SourceItem(BaseModel):
     url: str
     snippet: str
 
-# --- Helper: Gemini call (text generation) ---
 async def call_gemini(prompt: str, system: str = "") -> Dict[str, Any]:
-    """
-    Calls Gemini generateContent endpoint with a text prompt.
-    Returns parsed model text (the first 'text' found).
-    """
     headers = {
         "Content-Type": "application/json",
         "x-goog-api-key": GEMINI_API_KEY
@@ -88,7 +80,6 @@ async def call_gemini(prompt: str, system: str = "") -> Dict[str, Any]:
             text = ""
         return {"raw": data, "text": text}
 
-# --- Claim Normalization & Classification using Gemini ---
 async def normalize_and_classify_claim(claim: str) -> Dict[str, Any]:
     prompt = (
         "You are an assistant that extracts a single concise factual claim and classifies it.\n\n"
@@ -119,7 +110,6 @@ async def normalize_and_classify_claim(claim: str) -> Dict[str, Any]:
         parsed = {"claim": normalized, "type": ctype, "search_queries": queries}
     return parsed
 
-# --- Simple source-picker (MVP) ---
 def pick_sources_from_type(claim_type: str) -> List[str]:
     mapping = {
         "quantitative": ["BEA", "CENSUS"],
@@ -129,7 +119,6 @@ def pick_sources_from_type(claim_type: str) -> List[str]:
     }
     return mapping.get(claim_type, ["DATA.GOV"])
 
-# --- Query BEA example (GDP) ---
 async def query_bea(claim: str) -> List[Dict[str, str]]:
     if not BEA_API_KEY:
         return []
@@ -151,7 +140,6 @@ async def query_bea(claim: str) -> List[Dict[str, str]]:
         snippet = str(j)[:800]
         return [{"title": "BEA - NIPA GDP (sample)", "url": "https://www.bea.gov/data/gdp", "snippet": snippet}]
 
-# --- Query Census example (population/demographics) ---
 async def query_census(claim: str) -> List[Dict[str, str]]:
     if not CENSUS_API_KEY:
         return []
@@ -164,7 +152,6 @@ async def query_census(claim: str) -> List[Dict[str, str]]:
         snippet = str(r.json())[:800]
         return [{"title": "US Census Population Estimates (sample)", "url": url + "?" + urlencode(params), "snippet": snippet}]
 
-# --- Placeholder: Query Congress.gov ---
 async def query_congress(claim: str) -> List[Dict[str, str]]:
     if not CONGRESS_API_KEY:
         return []
@@ -177,7 +164,6 @@ async def query_congress(claim: str) -> List[Dict[str, str]]:
         snippet = str(r.json())[:800]
         return [{"title": "Congress.gov - search (sample)", "url": url + "?" + urlencode(params), "snippet": snippet}]
 
-# --- Aggregate source queries ---
 async def query_sources(sources: List[str], claim: str) -> List[Dict[str, str]]:
     tasks = []
     for s in sources:
@@ -193,7 +179,6 @@ async def query_sources(sources: List[str], claim: str) -> List[Dict[str, str]]:
     flat = [item for sub in results for item in sub]
     return flat
 
-# --- Confidence assessment (MVP heuristics) ---
 def assess_confidence(sources: List[Dict[str, str]], claim_type: str) -> (str, float):
     if not sources:
         return ("Unverifiable", 0.0)
@@ -207,7 +192,6 @@ def assess_confidence(sources: List[Dict[str, str]], claim_type: str) -> (str, f
     verdict = "Mostly True" if score > 0.5 else "Unclear"
     return (verdict, round(score, 2))
 
-# --- Summarize findings with Gemini ---
 async def summarize_with_evidence(claim: str, sources: List[Dict[str, str]]) -> str:
     context_parts = []
     for s in sources[:6]:
@@ -233,7 +217,6 @@ async def summarize_with_evidence(claim: str, sources: List[Dict[str, str]]) -> 
         else:
             return "No supporting government data found."
 
-# --- API endpoint ---
 @app.post("/verify")
 async def verify(req: VerifyRequest):
     claim = req.claim.strip()

@@ -110,10 +110,10 @@ async def normalize_and_classify_claim(claim: str) -> Dict[str, Any]:
 
 def pick_sources_from_type(claim_type: str) -> List[str]:
     mapping = {
-        "quantitative": ["BEA", "CENSUS"],
-        "factual": ["CONGRESS", "DATA.GOV"],
-        "causal": ["DATA.GOV", "NBER"],
-        "qualitative": ["DATA.GOV", "CENSUS"]
+        "quantitative": ["DATA.GOV"],
+        "factual": ["DATA.GOV"],
+        "causal": ["DATA.GOV"],
+        "qualitative": ["DATA.GOV"]
     }
     return mapping.get(claim_type, ["DATA.GOV"])
 
@@ -238,4 +238,5 @@ async def verify(req: VerifyRequest):
         "summary": summary,
         "sources": sources_results
     }
+
 

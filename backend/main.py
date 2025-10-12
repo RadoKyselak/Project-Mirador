@@ -20,6 +20,7 @@ app.add_middleware(
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 DATA_GOV_API_KEY = os.getenv("DATA_GOV_API_KEY")
 
+
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
 GEMINI_ENDPOINT = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
 
@@ -109,68 +110,32 @@ async def normalize_and_classify_claim(claim: str) -> Dict[str, Any]:
     return parsed
 
 def pick_sources_from_type(claim_type: str) -> List[str]:
-    mapping = {
-        "quantitative": ["DATA.GOV"],
-        "factual": ["DATA.GOV"],
-        "causal": ["DATA.GOV"],
-        "qualitative": ["DATA.GOV"]
-    }
-    return mapping.get(claim_type, ["DATA.GOV"])
+    return ["DATA.GOV"]
 
-async def query_bea(claim: str) -> List[Dict[str, str]]:
-    if not BEA_API_KEY:
+async def query_datagov(claim: str) -> List[Dict[str, str]]:
+    if not DATA_GOV_API_KEY:
         return []
-    url = "https://apps.bea.gov/api/data"
-    params = {
-        "UserID": BEA_API_KEY,
-        "method": "GetData",
-        "DataSetName": "NIPA",
-        "TableName": "T10101",
-        "Frequency": "A",
-        "Year": "2024",
-        "ResultFormat": "json"
-    }
+    url = "https://api.data.gov/catalog/v1"
+    params = {"api_key": DATA_GOV_API_KEY, "q": claim}
     async with httpx.AsyncClient(timeout=20.0) as client:
         r = await client.get(url, params=params)
         if r.status_code != 200:
             return []
         j = r.json()
-        snippet = str(j)[:800]
-        return [{"title": "BEA - NIPA GDP (sample)", "url": "https://www.bea.gov/data/gdp", "snippet": snippet}]
+        results = []
+        for item in j.get("results", [])[:3]:
+            results.append({
+                "title": item.get("title", "No Title"),
+                "url": item.get("@id", ""),
+                "snippet": item.get("description", "No description available.")
+            })
+        return results
 
-async def query_census(claim: str) -> List[Dict[str, str]]:
-    if not CENSUS_API_KEY:
-        return []
-    params = {"get": "NAME,POP", "for": "state:*", "key": CENSUS_API_KEY}
-    url = "https://api.census.gov/data/2023/pep/population"
-    async with httpx.AsyncClient(timeout=20.0) as client:
-        r = await client.get(url, params=params)
-        if r.status_code != 200:
-            return []
-        snippet = str(r.json())[:800]
-        return [{"title": "US Census Population Estimates (sample)", "url": url + "?" + urlencode(params), "snippet": snippet}]
-
-async def query_congress(claim: str) -> List[Dict[str, str]]:
-    if not CONGRESS_API_KEY:
-        return []
-    url = "https://api.congress.gov/v3/bill"
-    params = {"api_key": CONGRESS_API_KEY, "query": claim}
-    async with httpx.AsyncClient(timeout=20.0) as client:
-        r = await client.get(url, params=params)
-        if r.status_code != 200:
-            return []
-        snippet = str(r.json())[:800]
-        return [{"title": "Congress.gov - search (sample)", "url": url + "?" + urlencode(params), "snippet": snippet}]
-
-async def query_sources(sources: List[str], claim: str) -> List[Dict[str, str]]:
+async def query_sources(sources: List[str>, claim: str) -> List[Dict[str, str]]:
     tasks = []
     for s in sources:
-        if s == "BEA":
-            tasks.append(query_bea(claim))
-        elif s == "CENSUS":
-            tasks.append(query_census(claim))
-        elif s == "CONGRESS":
-            tasks.append(query_congress(claim))
+        if s == "DATA.GOV":
+            tasks.append(query_datagov(claim))
         else:
             tasks.append(asyncio.sleep(0, result=[]))
     results = await asyncio.gather(*tasks)
@@ -180,14 +145,13 @@ async def query_sources(sources: List[str], claim: str) -> List[Dict[str, str]]:
 def assess_confidence(sources: List[Dict[str, str]], claim_type: str) -> (str, float):
     if not sources:
         return ("Unverifiable", 0.0)
-    titles = " ".join([s["title"].lower() for s in sources])
-    score = 0.2
-    if "bea" in titles or "gdp" in titles:
-        score += 0.4
-    if "census" in titles or "population" in titles:
-        score += 0.3
-    score = min(score, 0.95)
-    verdict = "Mostly True" if score > 0.5 else "Unclear"
+    
+    score = 0.5 
+    verdict = "Unclear"
+    if len(sources) > 0:
+        score = 0.75
+        verdict = "Mostly True"
+
     return (verdict, round(score, 2))
 
 async def summarize_with_evidence(claim: str, sources: List[Dict[str, str]]) -> str:
@@ -238,5 +202,3 @@ async def verify(req: VerifyRequest):
         "summary": summary,
         "sources": sources_results
     }
-
-

@@ -18,7 +18,12 @@ app.add_middleware(
 )
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+if not GEMINI_API_KEY:
+    raise ValueError("GEMINI_API_KEY environment variable is required")
+
 DATA_GOV_API_KEY = os.getenv("DATA_GOV_API_KEY")
+if not DATA_GOV_API_KEY:
+    print("Warning: DATA_GOV_API_KEY not set. Data.gov functionality will be limited.")
 
 
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
@@ -131,7 +136,7 @@ async def query_datagov(claim: str) -> List[Dict[str, str]]:
             })
         return results
 
-async def query_sources(sources: List[str>, claim: str) -> List[Dict[str, str]]:
+async def query_sources(sources: List[str], claim: str) -> List[Dict[str, str]]:
     tasks = []
     for s in sources:
         if s == "DATA.GOV":
@@ -142,15 +147,38 @@ async def query_sources(sources: List[str>, claim: str) -> List[Dict[str, str]]:
     flat = [item for sub in results for item in sub]
     return flat
 
-def assess_confidence(sources: List[Dict[str, str]], claim_type: str) -> (str, float):
+def assess_confidence(sources: List[Dict[str, str]], claim_type: str) -> tuple[str, float]:
     if not sources:
         return ("Unverifiable", 0.0)
     
-    score = 0.5 
+    # Base confidence on number and quality of sources
+    score = 0.0
     verdict = "Unclear"
-    if len(sources) > 0:
+    
+    # Weight by number of sources
+    source_count = len(sources)
+    if source_count >= 3:
+        score = 0.9
+    elif source_count == 2:
         score = 0.75
+    elif source_count == 1:
+        score = 0.6
+    
+    if claim_type == "quantitative":
+        score *= 0.9  # Quantitative claims need more evidence
+    elif claim_type == "factual":
+        score *= 1.0  # Factual claims can be verified directly
+    else:
+        score *= 0.8  # Qualitative claims are harder to verify
+    
+    if score >= 0.8:
+        verdict = "Verified True"
+    elif score >= 0.6:
         verdict = "Mostly True"
+    elif score >= 0.4:
+        verdict = "Partially Verified"
+    else:
+        verdict = "Insufficient Evidence"
 
     return (verdict, round(score, 2))
 

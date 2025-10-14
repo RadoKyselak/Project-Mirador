@@ -9,6 +9,11 @@ from urllib.parse import urlencode
 
 app = FastAPI()
 
+# temporary health check for Vercel API
+@app.get("/")
+async def health_check():
+    return {"status": "ok", "message": "Stelthar-API is running."}
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -230,3 +235,4 @@ async def verify(req: VerifyRequest):
         "summary": summary,
         "sources": sources_results
     }
+

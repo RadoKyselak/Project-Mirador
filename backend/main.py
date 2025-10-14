@@ -9,11 +9,6 @@ from urllib.parse import urlencode
 
 app = FastAPI()
 
-# temporary health check for Vercel API
-@app.get("/")
-async def health_check():
-    return {"status": "ok", "message": "Stelthar-API is running."}
-
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -23,16 +18,16 @@ app.add_middleware(
 )
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-if not GEMINI_API_KEY:
-    raise ValueError("GEMINI_API_KEY environment variable is required")
-
 DATA_GOV_API_KEY = os.getenv("DATA_GOV_API_KEY")
-if not DATA_GOV_API_KEY:
-    print("Warning: DATA_GOV_API_KEY not set. Data.gov functionality will be limited.")
-
 
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
 GEMINI_ENDPOINT = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
+
+# === THIS IS THE NEW HEALTH CHECK ROUTE ===
+@app.get("/")
+async def health_check():
+    """Provides a simple health check endpoint."""
+    return {"status": "ok", "message": "Stelthar-API is running."}
 
 class VerifyRequest(BaseModel):
     claim: str
@@ -43,6 +38,8 @@ class SourceItem(BaseModel):
     snippet: str
 
 async def call_gemini(prompt: str, system: str = "") -> Dict[str, Any]:
+    if not GEMINI_API_KEY:
+        raise HTTPException(status_code=500, detail="GEMINI_API_KEY is not configured.")
     headers = {
         "Content-Type": "application/json",
         "x-goog-api-key": GEMINI_API_KEY
@@ -64,29 +61,9 @@ async def call_gemini(prompt: str, system: str = "") -> Dict[str, Any]:
         data = r.json()
         text = ""
         try:
-            candidates = data.get("candidates") or []
-            if candidates:
-                parts = candidates[0].get("content", {}).get("parts") or candidates[0].get("parts")
-                if parts:
-                    text = "".join(parts)
-            if not text:
-                def find_text(obj):
-                    if isinstance(obj, str):
-                        return obj
-                    if isinstance(obj, dict):
-                        for v in obj.values():
-                            res = find_text(v)
-                            if res:
-                                return res
-                    if isinstance(obj, list):
-                        for v in obj:
-                            res = find_text(v)
-                            if res:
-                                return res
-                    return None
-                text = find_text(data) or ""
-        except Exception:
-            text = ""
+            text = data["candidates"][0]["content"]["parts"][0]["text"]
+        except (KeyError, IndexError):
+            text = "" # Or handle the error as you see fit
         return {"raw": data, "text": text}
 
 async def normalize_and_classify_claim(claim: str) -> Dict[str, Any]:
@@ -100,23 +77,14 @@ async def normalize_and_classify_claim(claim: str) -> Dict[str, Any]:
         "Output ONLY valid JSON.\n"
     )
     res = await call_gemini(prompt)
-    text = res["text"].strip()
+    text = res["text"].strip().replace("```json", "").replace("```", "")
     import json
     try:
         parsed = json.loads(text)
     except Exception:
+        # Fallback if Gemini fails to produce valid JSON
         normalized = claim.strip().replace("\n", " ")
-        cl = normalized.lower()
-        if any(w in cl for w in ["%","percent","increase","decrease","grow","fell","rate"]):
-            ctype = "quantitative"
-            queries = [normalized, "gdp 2024 value", "official statistics"]
-        elif any(w in cl for w in ["bill","passed","law","legislation","congress"]):
-            ctype = "factual"
-            queries = [normalized, "congress.gov " + normalized, "official bill text"]
-        else:
-            ctype = "qualitative"
-            queries = [normalized, normalized + " government data", "official report"]
-        parsed = {"claim": normalized, "type": ctype, "search_queries": queries}
+        parsed = {"claim": normalized, "type": "qualitative", "search_queries": [normalized]}
     return parsed
 
 def pick_sources_from_type(claim_type: str) -> List[str]:
@@ -128,111 +96,72 @@ async def query_datagov(claim: str) -> List[Dict[str, str]]:
     url = "https://api.data.gov/catalog/v1"
     params = {"api_key": DATA_GOV_API_KEY, "q": claim}
     async with httpx.AsyncClient(timeout=20.0) as client:
-        r = await client.get(url, params=params)
-        if r.status_code != 200:
+        try:
+            r = await client.get(url, params=params)
+            r.raise_for_status() # Will raise an exception for 4XX/5XX responses
+            j = r.json()
+            results = []
+            for item in j.get("results", [])[:3]:
+                results.append({
+                    "title": item.get("title", "No Title"),
+                    "url": item.get("@id", ""),
+                    "snippet": item.get("description", "No description available.")[:200]
+                })
+            return results
+        except httpx.RequestError as exc:
+            print(f"An error occurred while requesting {exc.request.url!r}.")
             return []
-        j = r.json()
-        results = []
-        for item in j.get("results", [])[:3]:
-            results.append({
-                "title": item.get("title", "No Title"),
-                "url": item.get("@id", ""),
-                "snippet": item.get("description", "No description available.")
-            })
-        return results
+        except httpx.HTTPStatusError as exc:
+            print(f"Error response {exc.response.status_code} while requesting {exc.request.url!r}.")
+            return []
+
 
 async def query_sources(sources: List[str], claim: str) -> List[Dict[str, str]]:
-    tasks = []
-    for s in sources:
-        if s == "DATA.GOV":
-            tasks.append(query_datagov(claim))
-        else:
-            tasks.append(asyncio.sleep(0, result=[]))
+    tasks = [query_datagov(claim)]
     results = await asyncio.gather(*tasks)
-    flat = [item for sub in results for item in sub]
-    return flat
+    return [item for sub in results for item in sub]
 
 def assess_confidence(sources: List[Dict[str, str]], claim_type: str) -> tuple[str, float]:
     if not sources:
         return ("Unverifiable", 0.0)
-    
-    # Base confidence on number and quality of sources
-    score = 0.0
-    verdict = "Unclear"
-    
-    # Weight by number of sources
-    source_count = len(sources)
-    if source_count >= 3:
-        score = 0.9
-    elif source_count == 2:
-        score = 0.75
-    elif source_count == 1:
-        score = 0.6
-    
-    if claim_type == "quantitative":
-        score *= 0.9  # Quantitative claims need more evidence
-    elif claim_type == "factual":
-        score *= 1.0  # Factual claims can be verified directly
-    else:
-        score *= 0.8  # Qualitative claims are harder to verify
-    
-    if score >= 0.8:
-        verdict = "Verified True"
-    elif score >= 0.6:
-        verdict = "Mostly True"
-    elif score >= 0.4:
-        verdict = "Partially Verified"
-    else:
-        verdict = "Insufficient Evidence"
-
+    score = min(0.5 + (len(sources) * 0.15), 0.95)
+    verdict = "Mostly True" if score > 0.6 else "Unclear"
     return (verdict, round(score, 2))
 
 async def summarize_with_evidence(claim: str, sources: List[Dict[str, str]]) -> str:
-    context_parts = []
-    for s in sources[:6]:
-        context_parts.append(f"Source: {s['title']}\nURL: {s['url']}\nSnippet: {s['snippet']}\n---\n")
-    context = "\n".join(context_parts)
+    if not sources:
+        return "No supporting government data could be found to verify this claim."
+    context = "\n".join([f"Source: {s['title']}\nSnippet: {s['snippet']}" for s in sources])
     prompt = (
-        "You are a concise assistant that reads official-source snippets and returns:\n"
-        "1) a one-sentence plain-English conclusion about the claim\n"
-        "2) a short justification (1-2 sentences) citing which sources support or contradict\n\n"
+        "Based on the following snippets from government sources, provide a one-sentence summary assessing the claim's validity.\n\n"
         f"Claim: '''{claim}'''\n\n"
-        f"Context from official sources:\n{context}\n\n"
-        "Return only JSON: {\"summary\": ..., \"justification\": ...}\n"
+        f"Context:\n{context}\n\n"
+        "Summary:"
     )
     res = await call_gemini(prompt)
-    text = res["text"].strip()
-    import json
-    try:
-        parsed = json.loads(text)
-        return parsed.get("summary", "") + " " + parsed.get("justification", "")
-    except Exception:
-        if sources:
-            return f"According to {sources[0]['title']}, the claim appears to be supported. See linked sources."
-        else:
-            return "No supporting government data found."
+    return res["text"].strip() if res["text"] else "Could not generate a summary."
 
 @app.post("/verify")
 async def verify(req: VerifyRequest):
     claim = req.claim.strip()
     if not claim:
         raise HTTPException(status_code=400, detail="Empty claim.")
+    
     normalized = await normalize_and_classify_claim(claim)
     claim_norm = normalized.get("claim")
     claim_type = normalized.get("type")
-    queries = normalized.get("search_queries", [])
-    sources_to_query = pick_sources_from_type(claim_type)
-    sources_results = await query_sources(sources_to_query, claim_norm)
+    
+    sources_results = await query_sources(pick_sources_from_type(claim_type), claim_norm)
     verdict, confidence = assess_confidence(sources_results, claim_type)
     summary = await summarize_with_evidence(claim_norm, sources_results)
+    
     return {
         "claim_original": claim,
         "claim_normalized": claim_norm,
         "claim_type": claim_type,
-        "search_queries": queries,
+        "search_queries": normalized.get("search_queries", []),
         "verdict": verdict,
         "confidence": confidence,
         "summary": summary,
         "sources": sources_results
     }
-

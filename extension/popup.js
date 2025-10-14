@@ -28,7 +28,7 @@ document.addEventListener("DOMContentLoaded", () => {
           body: JSON.stringify({claim})
         });
         const j = await resp.json();
-        
+        console.log(j);
         resultEl.innerHTML = `
           <div class="verdict">Verdict: ${j.verdict} (confidence: ${j.confidence})</div>
           <div style="margin-top:8px;"><strong>Normalized:</strong> ${j.claim_normalized}</div>
@@ -42,5 +42,6 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   };
 });
+
 
 

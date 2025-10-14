@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Stelthar — Civic Fact Check",
-  "version": "0.1",
+  "version": "1.0.1",
   "description": "Highlight text and verify claims using official government APIs.",
   "permissions": ["scripting", "activeTab", "storage"],
   "host_permissions": ["<all_urls>"],

@@ -1,4 +1,4 @@
-const BACKEND_URL = "https://stelthar-api.vercel.app/verify";
+const BACKEND_URL = "https://stelthar-api.vercel.app";
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === "verify") {
@@ -9,5 +9,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
   return true;
 });
+
 
 

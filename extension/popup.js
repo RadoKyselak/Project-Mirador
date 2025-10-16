@@ -1,4 +1,4 @@
-const BACKEND_URL = "https://stelthar-api.vercel.app";
+const BACKEND_URL = "https://stelthar-api.vercel.app/verify";
 
 document.addEventListener("DOMContentLoaded", () => {
   const claimEl = document.getElementById("claim");
@@ -42,6 +42,7 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   };
 });
+
 
 
 

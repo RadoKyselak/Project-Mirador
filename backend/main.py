@@ -82,21 +82,50 @@ def pick_sources_from_type(claim_type: str) -> List[str]:
     return mapping.get(claim_type, ["DATA.GOV"])
 
 async def query_bea(query: str) -> List[Dict[str, str]]:
-    if not BEA_API_KEY: return []
+    if not BEA_API_key:
+        return []
+    search_term = query.lower()
+    dataset_name = "NIPA" 
+    if "gdp" in search_term:
+        dataset_name = "NIPA"
+    elif "investment" in search_term:
+        dataset_name = "NIUnderlyingDetail"
+    
     params = {
-        "UserID": BEA_API_KEY, "method": "GetData", "DataSetName": "NIPA",
-        "TableName": "T10101", "Frequency": "A", "Year": "ALL", "ResultFormat": "json"
+        'UserID': BEA_API_KEY,
+        'method': 'GetData',
+        'datasetname': dataset_name,
+        'TableName': 'T10101',
+        'Frequency': 'A',
+        'Year': 'ALL',
+        'ResultFormat': 'json'
     }
     url = "https://apps.bea.gov/api/data"
     try:
         async with httpx.AsyncClient(timeout=20.0) as client:
             r = await client.get(url, params=params)
             r.raise_for_status()
-            snippet = str(r.json())[:500]
-            return [{"title": "BEA National Income and Product Accounts", "url": "https://www.bea.gov/data/gdp/gross-domestic-product", "snippet": snippet}]
-    except Exception:
-        return []
+            data = r.json()
+            
+            results = data.get('BEAAPI', {}).get('Results', {}).get('Data', [])
+            snippet = "BEA data found. "
+            if results:
+                first_point = results[0]
+                last_point = results[-1]
+                snippet += (f"The series includes data from {first_point.get('TimePeriod')} "
+                            f"to {last_point.get('TimePeriod')}, with a final value of "
+                            f"{last_point.get('DataValue')}.")
+            else:
+                snippet = "Could not retrieve specific data points, but the dataset is relevant."
 
+            return [{
+                "title": f"BEA Data for Dataset: {dataset_name}",
+                "url": str(r.url),
+                "snippet": snippet
+            }]
+    except Exception as e:
+        print(f"BEA API Error: {e}")
+        return []
 async def query_census(query: str) -> List[Dict[str, str]]:
     if not CENSUS_API_KEY: return []
     params = {"get": "NAME,POP", "for": "state:*", "key": CENSUS_API_KEY}
@@ -201,4 +230,5 @@ async def verify(req: VerifyRequest):
         "summary": summary,
         "sources": sources_results
     }
+
 

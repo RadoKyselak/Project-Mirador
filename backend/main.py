@@ -42,7 +42,7 @@ async def call_gemini(prompt: str) -> Dict[str, Any]:
     headers = {"Content-Type": "application/json", "x-goog-api-key": GEMINI_API_KEY}
     body = {"contents": [{"role": "user", "parts": [{"text": prompt}]}]}
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(timeout=45.0) as client:
             r = await client.post(GEMINI_ENDPOINT, headers=headers, json=body)
             r.raise_for_status()
             data = r.json()
@@ -53,20 +53,38 @@ async def call_gemini(prompt: str) -> Dict[str, Any]:
     except (httpx.RequestError, json.JSONDecodeError) as e:
         raise HTTPException(status_code=500, detail=f"Error communicating with Gemini: {str(e)}")
 
-async def normalize_and_classify_claim(claim: str) -> Dict[str, Any]:
-    prompt = (
-        "You are an assistant that extracts a single concise factual claim and classifies it.\n\n"
-        f"Input text: '''{claim}'''\n\n"
-        "Return a JSON object with keys:\n"
-        " - claim: the single, normalized factual claim (one sentence)\n"
-        " - type: one of [quantitative, qualitative, causal, factual]\n"
-        " - search_queries: an array of 3 short search queries (no more than 8 words each) derived from the claim.\n\n"
-        "Output ONLY valid JSON.\n"
-    )
+async def normalize_and_suggest_params(claim: str) -> Dict[str, Any]:
+    "You are an expert at deconstructing factual claims into API queries for U.S. government data. "
+        "Analyze the user's claim and provide a JSON object with a precise, dynamic plan to verify it. "
+        "If a claim does not map well to an API, provide null for that API's parameters.\n\n"
+        f"USER CLAIM: '''{claim}'''\n\n"
+        "YOUR TASK: Return a single, valid JSON object with the following structure:\n"
+        "{\n"
+        '  "claim_normalized": "A single, normalized factual claim in one sentence.",\n'
+        '  "claim_type": "One of [quantitative, qualitative, causal, factual].",\n'
+        '  "search_queries": ["An array of 3 general search queries derived from the claim."],\n'
+        '  "api_params": {\n'
+        '    "bea": { "DataSetName": "e.g., NIPA", "TableName": "e.g., T10101", "Frequency": "e.g., A", "Year": "e.g., 2023" },\n'
+        '    "census": { "endpoint": "e.g., /data/2023/pep/population", "params": { "get": "e.g., NAME,POP", "for": "e.g., state:*" } },\n'
+        '    "congress": { "query": "A specific query for a bill or law." }\n'
+        '  }\n'
+        "}\n\n"
+        "EXAMPLE:\n"
+        "USER CLAIM: 'The US GDP was around 27 trillion dollars in 2023.'\n"
+        "YOUR JSON RESPONSE: {\n"
+        '  "claim_normalized": "The United States Gross Domestic Product was approximately $27 trillion in 2023.",\n'
+        '  "claim_type": "quantitative",\n'
+        '  "search_queries": ["US GDP 2023", "Bureau of Economic Analysis GDP data", "2023 national economic output"],\n'
+        '  "api_params": {\n'
+        '    "bea": { "DataSetName": "NIPA", "TableName": "T10101", "Frequency": "A", "Year": "2023" },\n'
+        '    "census": null,\n'
+        '    "congress": null\n'
+        '  }\n'
+        "}"
     res = await call_gemini(prompt)
     text = res["text"].strip().replace("```json", "").replace("```", "")
     try:
-        parsed = json.loads(text)
+         return json.loads(text)
     except Exception:
         normalized = claim.strip().replace("\n", " ")
         parsed = {"claim": normalized, "type": "qualitative", "search_queries": [normalized]}
@@ -81,127 +99,79 @@ def pick_sources_from_type(claim_type: str) -> List[str]:
     }
     return mapping.get(claim_type, ["DATA.GOV"])
 
-async def query_bea(query: str) -> List[Dict[str, str]]:
-    if not BEA_API_key:
-        return []
-    search_term = query.lower()
-    dataset_name = "NIPA" 
-    if "gdp" in search_term:
-        dataset_name = "NIPA"
-    elif "investment" in search_term:
-        dataset_name = "NIUnderlyingDetail"
-    
-    params = {
-        'UserID': BEA_API_KEY,
-        'method': 'GetData',
-        'datasetname': dataset_name,
-        'TableName': 'T10101',
-        'Frequency': 'A',
-        'Year': 'ALL',
-        'ResultFormat': 'json'
-    }
+sync def query_bea(params: Dict[str, Any]) -> List[Dict[str, str]]:
+
+    if not BEA_API_KEY or not params: return []
+
+    base_params = {"UserID": BEA_API_KEY, "method": "GetData", "ResultFormat": "json"}
+
+    final_params = {**base_params, **params}
     url = "https://apps.bea.gov/api/data"
     try:
-        async with httpx.AsyncClient(timeout=20.0) as client:
-            r = await client.get(url, params=params)
+        async with httpx.AsyncClient() as client:
+            r = await client.get(url, params=final_params)
             r.raise_for_status()
             data = r.json()
-            
             results = data.get('BEAAPI', {}).get('Results', {}).get('Data', [])
-            snippet = "BEA data found. "
-            if results:
-                first_point = results[0]
-                last_point = results[-1]
-                snippet += (f"The series includes data from {first_point.get('TimePeriod')} "
-                            f"to {last_point.get('TimePeriod')}, with a final value of "
-                            f"{last_point.get('DataValue')}.")
-            else:
-                snippet = "Could not retrieve specific data points, but the dataset is relevant."
-
-            return [{
-                "title": f"BEA Data for Dataset: {dataset_name}",
-                "url": str(r.url),
-                "snippet": snippet
-            }]
-    except Exception as e:
-        print(f"BEA API Error: {e}")
-        return []
-async def query_census(query: str) -> List[Dict[str, str]]:
-    if not CENSUS_API_KEY: return []
-    params = {"get": "NAME,POP", "for": "state:*", "key": CENSUS_API_KEY}
-    url = "https://api.census.gov/data/2023/pep/population"
+            snippet = f"Found {len(results)} data points in BEA dataset '{params.get('DataSetName')}'. "
+            if results: snippet += f"Latest value for {results[-1].get('TimePeriod')} is {results[-1].get('DataValue')}."
+            return [{"title": f"BEA Dataset: {params.get('DataSetName')}", "url": str(r.url), "snippet": snippet}]
+    except Exception: return []
+async def query_census(params: Dict[str, Any]) -> List[Dict[str, str]]:
+    if not CENSUS_API_KEY or not params: return []
+    endpoint = params.get("endpoint")
+    census_params = params.get("params", {})
+    if not endpoint or not census_params: return []
+    
+    url = f"https://api.census.gov{endpoint}"
+    census_params['key'] = CENSUS_API_KEY
     try:
-        async with httpx.AsyncClient(timeout=20.0) as client:
-            r = await client.get(url, params=params)
+        async with httpx.AsyncClient() as client:
+            r = await client.get(url, params=census_params)
             r.raise_for_status()
             snippet = str(r.json())[:500]
-            return [{"title": "US Census Population Estimates", "url": r.url, "snippet": snippet}]
-    except Exception:
-        return []
+            return [{"title": "US Census Bureau Data", "url": str(r.url), "snippet": snippet}]
+    except Exception: return []
 
-async def query_congress(query: str) -> List[Dict[str, str]]:
-    if not CONGRESS_API_KEY: return []
-    params = {"api_key": CONGRESS_API_KEY, "q": query}
-    url = f"https://api.congress.gov/v3/bill"
+async def query_congress(params: Dict[str, Any]) -> List[Dict[str, str]]:
+    if not CONGRESS_API_KEY or not params or not params.get('query'): return []
+    api_params = {"api_key": CONGRESS_API_KEY, "q": params['query']}
+    url = "https://api.congress.gov/v3/bill"
     try:
-        async with httpx.AsyncClient(timeout=20.0) as client:
-            r = await client.get(url, params=params)
+        async with httpx.AsyncClient() as client:
+            r = await client.get(url, params=api_params)
             r.raise_for_status()
             bills = r.json().get("bills", [])
             results = []
             for bill in bills[:2]:
-                results.append({"title": bill.get('title'), "url": bill.get('url'), "snippet": f"Bill Number: {bill.get('number')}, Latest Action: {bill.get('latestAction', {}).get('text')}"})
+                results.append({"title": bill.get('title'), "url": bill.get('url'), "snippet": f"Latest Action: {bill.get('latestAction', {}).get('text')}"})
             return results
-    except Exception:
-        return []
+    except Exception: return []
 
 async def query_datagov(query: str) -> List[Dict[str, str]]:
-    if not DATA_GOV_API_KEY: return []
-    url = "https://api.data.gov/catalog/v1"
-    params = {"api_key": DATA_GOV_API_KEY, "q": query}
-    try:
-        async with httpx.AsyncClient(timeout=20.0) as client:
-            r = await client.get(url, params=params)
-            r.raise_for_status()
-            j = r.json()
-            results = []
-            for item in j.get("results", [])[:2]:
-                results.append({"title": item.get("title"), "url": item.get("@id"), "snippet": item.get("description", "")[:200]})
-            return results
-    except Exception:
-        return []
+    if not DATA_GOV_API_KEY or not query: return []
+    return []
 
-async def query_sources(sources_to_query: List[str], search_queries: List[str]) -> List[Dict[str, str]]:
-    """Runs queries against the selected APIs in parallel."""
+
+async def query_sources(sources_to_query: List[str], api_params: Dict, fallback_query: str) -> List[Dict[str, str]]:
     tasks = []
-    primary_query = search_queries[0] if search_queries else ""
-
     for source in sources_to_query:
         if source == "BEA":
-            tasks.append(query_bea(primary_query))
+            tasks.append(query_bea(api_params.get("bea")))
         elif source == "CENSUS":
-            tasks.append(query_census(primary_query))
+            tasks.append(query_census(api_params.get("census")))
         elif source == "CONGRESS":
-            legislative_query = next((q for q in search_queries if "bill" in q or "law" in q), primary_query)
-            tasks.append(query_congress(legislative_query))
+            tasks.append(query_congress(api_params.get("congress")))
         elif source == "DATA.GOV":
-            tasks.append(query_datagov(primary_query))
+            tasks.append(query_datagov(fallback_query))
 
     results = await asyncio.gather(*tasks)
-    return [item for sublist in results for item in sublist]
+    return [item for sublist in results for item in sublist if sublist]
 
 async def summarize_with_evidence(claim: str, sources: List[Dict[str, str]]) -> str:
-    if not sources:
-        return "No supporting government data could be found to verify this claim."
-    context = "\n".join([f"Source: {s['title']}\nSnippet: {s['snippet']}" for s in sources])
-    prompt = (
-        "Based on the following snippets from government sources, provide a one-sentence summary assessing the claim's validity.\n\n"
-        f"Claim: '''{claim}'''\n\n"
-        f"Context:\n{context}\n\n"
-        "Summary:"
-    )
-    res = await call_gemini(prompt)
-    return res["text"].strip() if res["text"] else "Could not generate a summary."
+    if not sources: return "No supporting government data could be found to verify this claim."
+    return "Could not generate a summary."
+
 
 @app.post("/verify")
 async def verify(req: VerifyRequest):
@@ -209,15 +179,21 @@ async def verify(req: VerifyRequest):
     if not claim:
         raise HTTPException(status_code=400, detail="Empty claim.")
     
-    normalized = await normalize_and_classify_claim(claim)
-    claim_norm = normalized.get("claim")
-    claim_type = normalized.get("type")
-    search_queries = normalized.get("search_queries", [])
+    analysis = await normalize_and_suggest_params(claim)
+    
+    claim_norm = analysis.get("claim_normalized")
+    claim_type = analysis.get("claim_type")
+    search_queries = analysis.get("search_queries", [])
+    api_params = analysis.get("api_params", {})
     
     sources_to_query = pick_sources_from_type(claim_type)
-    sources_results = await query_sources(sources_to_query, search_queries)
     
-    verdict, confidence = ("Unverifiable", 0.0) if not sources_results else ("Mostly True", 0.75)
+    sources_results = await query_sources(sources_to_query, api_params, search_queries[0] if search_queries else claim_norm)
+    
+    if not sources_results:
+        sources_results.extend(await query_datagov(search_queries[0] if search_queries else claim_norm))
+
+    verdict, confidence = ("Unverifiable", 0.0) if not sources_results else ("Mostly True", 0.8)
     summary = await summarize_with_evidence(claim_norm, sources_results)
     
     return {
@@ -230,5 +206,3 @@ async def verify(req: VerifyRequest):
         "summary": summary,
         "sources": sources_results
     }
-
-

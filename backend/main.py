@@ -40,7 +40,7 @@ async def call_gemini(prompt: str) -> Dict[str, Any]:
     headers = {"Content-Type": "application/json", "x-goog-api-key": GEMINI_API_KEY}
     body = {"contents": [{"role": "user", "parts": [{"text": prompt}]}]}
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(timeout=60.0) as client:
             r = await client.post(GEMINI_ENDPOINT, headers=headers, json=body)
             r.raise_for_status()
             data = r.json()
@@ -51,126 +51,164 @@ async def call_gemini(prompt: str) -> Dict[str, Any]:
     except (httpx.RequestError, json.JSONDecodeError) as e:
         raise HTTPException(status_code=500, detail=f"Error communicating with Gemini: {str(e)}")
 
-async def normalize_and_suggest_params(claim: str) -> Dict[str, Any]:
+async def analyze_claim_for_api_plan(claim: str) -> Dict[str, Any]:
     prompt = (
-        "You are an expert at deconstructing factual claims into API queries for U.S. government data. "
-        "Analyze the user's claim and provide a JSON object with a precise, dynamic plan to verify it. "
-        "If a claim does not map well to an API, provide null for that API's parameters.\n\n"
+        "You are a world-class research analyst and a U.S. government data expert. Your task is to deconstruct a user's factual claim into a precise, multi-tiered query plan to verify it using specific government APIs. You must act as an expert system, selecting the exact datasets and parameters needed.\n\n"
+        "AVAILABLE APIs & DATASETS:\n"
+        "1. BEA (Bureau of Economic Analysis): For national economic data (GDP, income, spending).\n"
+        "   - Key Datasets: 'NIPA' (National Income and Product Accounts), 'NIUnderlyingDetail'.\n"
+        "   - Key Tables: 'T10101' (GDP), 'T20305' (Personal Income), 'T31600' (Govt Spending by Function).\n"
+        "   - Required Params: `DataSetName`, `TableName`, `Frequency`, `Year`.\n"
+        "2. Census Bureau: For demographic and population data.\n"
+        "   - Key Endpoints: '/data/2023/pep/population' (Population Estimates), '/data/timeseries/poverty/histpov2' (Historical Poverty).\n"
+        "   - Required Params: `endpoint`, `params` (which includes `get` and `for`).\n"
+        "3. Congress.gov: For legislative data (bills, laws).\n"
+        "   - Required Params: `query` (a keyword search string).\n\n"
+        "YOUR METHODOLOGY (CHAIN-OF-THOUGHT):\n"
+        "1. First, normalize the user's claim into a clear, verifiable statement.\n"
+        "2. Second, determine the claim's type (e.g., 'quantitative').\n"
+        "3. Third, devise a query plan. Prioritize a 'Tier 1' direct parameter match if you can identify the exact dataset and table from the claim. If not, formulate 'Tier 2' keyword queries for each component of the claim.\n\n"
         f"USER CLAIM: '''{claim}'''\n\n"
-        "YOUR TASK: Return a single, valid JSON object with the following structure:\n"
+        "YOUR RESPONSE (Must be a single, valid JSON object):\n"
         "{\n"
-        '  "claim_normalized": "A single, normalized factual claim in one sentence.",\n'
-        '  "claim_type": "One of [quantitative, qualitative, causal, factual].",\n'
-        '  "search_queries": ["An array of 3 general search queries derived from the claim."],\n'
-        '  "api_params": {\n'
-        '    "bea": { "DataSetName": "e.g., NIPA", "TableName": "e.g., T10101", "Frequency": "e.g., A", "Year": "e.g., 2023" },\n'
-        '    "census": { "endpoint": "e.g., /data/2023/pep/population", "params": { "get": "e.g., NAME,POP", "for": "e.g., state:*" } },\n'
-        '    "congress": { "query": "A specific query for a bill or law." }\n'
+        '  "claim_normalized": "Your clear, verifiable statement.",\n'
+        '  "claim_type": "Your classification.",\n'
+        '  "api_plan": {\n'
+        '    "tier1_params": {\n'
+        '      "bea": { "DataSetName": "...", "TableName": "...", "Frequency": "...", "Year": "..." } or null,\n'
+        '      "census": { "endpoint": "...", "params": { "get": "...", "for": "..." } } or null,\n'
+        '      "congress": null\n'
+        '    },\n'
+        '    "tier2_keywords": ["A list of specific keyword search queries."]\n'
         '  }\n'
-        "}\n"
+        "}"
     )
     res = await call_gemini(prompt)
     text = res["text"].strip().replace("```json", "").replace("```", "")
     try:
         return json.loads(text)
     except Exception:
-        return {
-            "claim_normalized": claim, "claim_type": "qualitative",
-            "search_queries": [claim], "api_params": {}
-        }
+        return {"claim_normalized": claim, "claim_type": "qualitative", "api_plan": {"tier1_params": {}, "tier2_keywords": [claim]}}
 
 def pick_sources_from_type(claim_type: str) -> List[str]:
     mapping = {"quantitative": ["BEA", "CENSUS"], "factual": ["CONGRESS"], "default": ["DATA.GOV"]}
-    return mapping.get(claim_type, mapping["default"])
+    return mapping.get(claim_type, mapping.get("default"))
 
-async def query_bea(params: Dict[str, Any]) -> List[Dict[str, str]]:
+async def query_bea(params: Dict[str, Any] = None) -> List[Dict[str, Any]]:
     if not BEA_API_KEY or not params: return []
-    base_params = {"UserID": BEA_API_KEY, "method": "GetData", "ResultFormat": "json"}
-    final_params = {**base_params, **params}
+    final_params = {'UserID': BEA_API_KEY, 'method': 'GetData', 'ResultFormat': 'json', **params}
     url = "https://apps.bea.gov/api/data"
     try:
         async with httpx.AsyncClient() as client:
             r = await client.get(url, params=final_params)
             r.raise_for_status()
-            data = r.json()
-            results = data.get('BEAAPI', {}).get('Results', {}).get('Data', [])
+            data = r.json().get('BEAAPI', {}).get('Results', {})
+            results = data.get('Data', [])
             snippet = f"Found {len(results)} data points in BEA dataset '{params.get('DataSetName')}'. "
             if results: snippet += f"Latest value for {results[-1].get('TimePeriod')} is {results[-1].get('DataValue')}."
             return [{"title": f"BEA Dataset: {params.get('DataSetName')}", "url": str(r.url), "snippet": snippet}]
     except Exception: return []
 
-async def query_census(params: Dict[str, Any]) -> List[Dict[str, str]]:
-    if not CENSUS_API_KEY or not params: return []
-    endpoint = params.get("endpoint")
-    census_params = params.get("params", {})
-    if not endpoint or not census_params: return []
-    url = f"https://api.census.gov{endpoint}"
-    census_params['key'] = CENSUS_API_KEY
+async def query_census(params: Dict[str, Any] = None, keyword_query: str = None) -> List[Dict[str, Any]]:
+    if not CENSUS_API_KEY: return []
+    final_params = {'key': CENSUS_API_KEY}
+    if params:
+        url = f"https://api.census.gov{params.get('endpoint')}"
+        final_params.update(params.get('params', {}))
+    elif keyword_query:
+        url = "https://api.census.gov/data/2022/acs/acs1"
+        final_params.update({'get': 'NAME', 'for': 'us:1', 'q': keyword_query})
+    else: return []
+
     try:
         async with httpx.AsyncClient() as client:
-            r = await client.get(url, params=census_params)
+            r = await client.get(url, params=final_params)
             r.raise_for_status()
-            snippet = str(r.json())[:500]
-            return [{"title": "US Census Bureau Data", "url": str(r.url), "snippet": snippet}]
+            return [{"title": f"Census Data for '{keyword_query or 'parameterized search'}'", "url": str(r.url), "snippet": str(r.json()[:3])[:700]}]
     except Exception: return []
 
-async def query_congress(params: Dict[str, Any]) -> List[Dict[str, str]]:
-    if not CONGRESS_API_KEY or not params or not params.get('query'): return []
-    api_params = {"api_key": CONGRESS_API_KEY, "q": params['query']}
+async def query_congress(keyword_query: str = None) -> List[Dict[str, Any]]:
+    if not CONGRESS_API_KEY or not keyword_query: return []
+    params = {"api_key": CONGRESS_API_KEY, "q": keyword_query}
     url = "https://api.congress.gov/v3/bill"
     try:
         async with httpx.AsyncClient() as client:
-            r = await client.get(url, params=api_params)
+            r = await client.get(url, params=params)
             r.raise_for_status()
             bills = r.json().get("bills", [])
-            results = []
-            for bill in bills[:2]:
-                results.append({"title": bill.get('title'), "url": bill.get('url'), "snippet": f"Latest Action: {bill.get('latestAction', {}).get('text')}"})
-            return results
+            return [{"title": bill.get('title'), "url": bill.get('url'), "snippet": f"Latest Action: {bill.get('latestAction', {}).get('text')}"} for bill in bills[:1]]
     except Exception: return []
-
-async def query_datagov(query: str) -> List[Dict[str, str]]:
-    if not DATA_GOV_API_KEY or not query: return []
-    params = {"api_key": DATA_GOV_API_KEY, "q": query}
+    
+async def query_datagov(keyword_query: str) -> List[Dict[str, str]]:
+    if not DATA_GOV_API_KEY or not keyword_query: return []
+    params = {"api_key": DATA_GOV_API_KEY, "q": keyword_query}
     url = "https://api.data.gov/catalog/v1"
     try:
         async with httpx.AsyncClient() as client:
             r = await client.get(url, params=params)
             r.raise_for_status()
-            j = r.json()
-            results = []
-            for item in j.get("results", [])[:2]:
-                results.append({"title": item.get("title"), "url": item.get("@id"), "snippet": item.get("description", "")[:200]})
-            return results
-    except Exception:
-        return []
+            return [{"title": item.get("title"), "url": item.get("@id"), "snippet": item.get("description", "")[:250]} for item in r.json().get("results", [])[:1]]
+    except Exception: return []
 
-async def query_sources(sources_to_query: List[str], api_params: Dict, fallback_query: str) -> List[Dict[str, str]]:
-    tasks = []
+async def execute_query_plan(plan: Dict, claim_type: str) -> List[Dict[str, Any]]:
+    tier1_params = plan.get('tier1_params', {})
+    tier2_keywords = plan.get('tier2_keywords', [])
+    sources_to_query = pick_sources_from_type(claim_type)
+    tasks, results = [], []
+    
     for source in sources_to_query:
-        if source == "BEA":
-            tasks.append(query_bea(api_params.get("bea")))
-        elif source == "CENSUS":
-            tasks.append(query_census(api_params.get("census")))
-        elif source == "CONGRESS":
-            tasks.append(query_congress(api_params.get("congress")))
-        elif source == "DATA.GOV":
-            tasks.append(query_datagov(fallback_query))
-    results = await asyncio.gather(*tasks)
-    return [item for sublist in results for item in sublist if sublist]
+        if source == "BEA" and tier1_params.get("bea"): tasks.append(query_bea(params=tier1_params.get("bea")))
+        if source == "CENSUS" and tier1_params.get("census"): tasks.append(query_census(params=tier1_params.get("census")))
+
+    if tasks:
+        tier1_results = await asyncio.gather(*tasks)
+        results.extend([item for sublist in tier1_results for item in sublist if sublist])
+
+    if not results:
+        tasks = []
+        for keyword in tier2_keywords:
+            for source in sources_to_query:
+                if source == "CENSUS": tasks.append(query_census(keyword_query=keyword))
+                if source == "CONGRESS": tasks.append(query_congress(keyword_query=keyword))
+        
+        if tasks:
+            tier2_results = await asyncio.gather(*tasks)
+            results.extend([item for sublist in tier2_results for item in sublist if sublist])
+
+    if not results and tier2_keywords:
+        results.extend(await query_datagov(tier2_keywords[0]))
+        
+    return results
 
 async def summarize_with_evidence(claim: str, sources: List[Dict[str, str]]) -> str:
     if not sources:
         return "No supporting government data could be found to verify this claim."
-    context = "\n".join([f"Source: {s['title']}\nSnippet: {s['snippet']}" for s in sources])
+    
+    unique_sources = {s['url']: s for s in sources}.values()
+    context = "\n---\n".join([f"Source Title: {s['title']}\nURL: {s['url']}\nSnippet: {s['snippet']}" for s in unique_sources])
+    
     prompt = (
-        "Based on the following snippets from government sources, provide a one-sentence summary assessing the claim's validity.\n\n"
-        f"Claim: '''{claim}'''\n\n"
-        f"Context:\n{context}\n\n"
-        "Summary:"
+        "You are a meticulous and impartial fact-checker. Your sole responsibility is to analyze the provided evidence from U.S. government data sources and synthesize a definitive conclusion about the user's claim. Do not introduce outside information.\n\n"
+        "YOUR METHODOLOGY (CHAIN-OF-THOUGHT):\n"
+        "1. First, review all evidence snippets. Identify the key data points relevant to the claim.\n"
+        "2. Second, compare the data points. Are they consistent? Do they contradict each other? Is there enough information to make a judgment?\n"
+        "3. Third, synthesize your findings into a concise, one-sentence summary that directly addresses the claim. State whether the evidence supports, contradicts, or is insufficient to verify the claim. Start your summary with a clear concluding phrase (e.g., 'The data supports...', 'The data contradicts...', 'The available data is insufficient to...').\n"
+        "4. Fourth, provide a brief (1-2 sentence) justification for your conclusion, citing the key pieces of evidence from the snippets.\n\n"
+        f"USER'S CLAIM: '''{claim}'''\n\n"
+        f"AGGREGATED EVIDENCE:\n{context}\n\n"
+        "YOUR RESPONSE (Must be a single, valid JSON object):\n"
+        "{\n"
+        '  "summary": "Your final, synthesized one-sentence conclusion.",\n'
+        '  "justification": "Your brief justification citing the evidence."\n'
+        "}"
     )
     res = await call_gemini(prompt)
-    return res["text"].strip() if res["text"] else "Could not generate a summary."
+    text = res["text"].strip().replace("```json", "").replace("```", "")
+    try:
+        parsed = json.loads(text)
+        return f"{parsed.get('summary', '')} {parsed.get('justification', '')}"
+    except Exception:
+        return "Could not generate a conclusive summary based on the available data."
 
 @app.post("/verify")
 async def verify(req: VerifyRequest):
@@ -178,30 +216,24 @@ async def verify(req: VerifyRequest):
     if not claim:
         raise HTTPException(status_code=400, detail="Empty claim.")
     
-    analysis = await normalize_and_suggest_params(claim)
+    analysis = await analyze_claim_for_api_plan(claim)
     
     claim_norm = analysis.get("claim_normalized")
     claim_type = analysis.get("claim_type")
-    search_queries = analysis.get("search_queries", [])
-    api_params = analysis.get("api_params", {})
+    api_plan = analysis.get("api_plan", {})
     
-    sources_to_query = pick_sources_from_type(claim_type)
+    sources_results = await execute_query_plan(api_plan, claim_type)
     
-    sources_results = await query_sources(sources_to_query, api_params, search_queries[0] if search_queries else claim_norm)
-    
-    if not sources_results:
-        sources_results.extend(await query_datagov(search_queries[0] if search_queries else claim_norm))
-
-    verdict, confidence = ("Unverifiable", 0.0) if not sources_results else ("Mostly True", 0.8)
+    verdict, confidence = ("Inconclusive", 0.5) if not sources_results else ("Verifiable", 0.95)
     summary = await summarize_with_evidence(claim_norm, sources_results)
     
     return {
         "claim_original": claim,
         "claim_normalized": claim_norm,
         "claim_type": claim_type,
-        "search_queries": search_queries,
         "verdict": verdict,
         "confidence": confidence,
         "summary": summary,
-        "sources": sources_results
+        "sources": sources_results,
+        "debug_plan": api_plan
     }

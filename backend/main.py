@@ -18,6 +18,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# TO DO: key
+
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 DATA_GOV_API_KEY = os.getenv("DATA_GOV_API_KEY")
 BEA_API_KEY = os.getenv("BEA_API_KEY")
@@ -199,3 +201,4 @@ async def verify(req: VerifyRequest):
         "summary": summary,
         "sources": sources_results
     }
+

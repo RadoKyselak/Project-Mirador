@@ -64,10 +64,6 @@ async def analyze_claim_for_api_plan(claim: str) -> Dict[str, Any]:
         "   - Required Params: `endpoint`, `params` (which includes `get` and `for`).\n"
         "3. Congress.gov: For legislative data (bills, laws).\n"
         "   - Required Params: `query` (a keyword search string).\n\n"
-        "YOUR METHODOLOGY (CHAIN-OF-THOUGHT):\n"
-        "1. First, normalize the user's claim into a clear, verifiable statement.\n"
-        "2. Second, determine the claim's type (e.g., 'quantitative').\n"
-        "3. Third, devise a query plan. Prioritize a 'Tier 1' direct parameter match if you can identify the exact dataset and table from the claim. If not, formulate 'Tier 2' keyword queries for each component of the claim.\n\n"
         f"USER CLAIM: '''{claim}'''\n\n"
         "YOUR RESPONSE (Must be a single, valid JSON object):\n"
         "{\n"
@@ -96,7 +92,15 @@ def pick_sources_from_type(claim_type: str) -> List[str]:
 
 async def query_bea(params: Dict[str, Any] = None) -> List[Dict[str, Any]]:
     if not BEA_API_KEY or not params: return []
-    final_params = {'UserID': BEA_API_KEY, 'method': 'GetData', 'ResultFormat': 'json', **params}
+    final_params = {
+        'UserID': BEA_API_KEY,
+        'method': 'GetData',
+        'ResultFormat': 'json',
+        'DataSetName': params.get('DataSetName'),
+        'TableName': params.get('TableName'),
+        'Frequency': params.get('Frequency'),
+        'Year': params.get('Year')
+    }
     url = "https://apps.bea.gov/api/data"
     try:
         async with httpx.AsyncClient() as client:
@@ -104,10 +108,16 @@ async def query_bea(params: Dict[str, Any] = None) -> List[Dict[str, Any]]:
             r.raise_for_status()
             data = r.json().get('BEAAPI', {}).get('Results', {})
             results = data.get('Data', [])
-            snippet = f"Found {len(results)} data points in BEA dataset '{params.get('DataSetName')}'. "
-            if results: snippet += f"Latest value for {results[-1].get('TimePeriod')} is {results[-1].get('DataValue')}."
-            return [{"title": f"BEA Dataset: {params.get('DataSetName')}", "url": str(r.url), "snippet": snippet}]
-    except Exception: return []
+            snippets = []
+            for item in results:
+                desc = item.get('LineDescription', 'Data')
+                snippet = f"{desc} for {item.get('TimePeriod')} was ${item.get('DataValue')} billion."
+                snippets.append(snippet)
+            if not snippets: return []
+            return [{"title": f"BEA Dataset: {params.get('DataSetName')} - {params.get('TableName')}", "url": str(r.url), "snippet": " ".join(snippets)}]
+    except Exception as e:
+        print(f"BEA API Error: {e}")
+        return []
 
 async def query_census(params: Dict[str, Any] = None, keyword_query: str = None) -> List[Dict[str, Any]]:
     if not CENSUS_API_KEY: return []
@@ -116,7 +126,7 @@ async def query_census(params: Dict[str, Any] = None, keyword_query: str = None)
         url = f"https://api.census.gov{params.get('endpoint')}"
         final_params.update(params.get('params', {}))
     elif keyword_query:
-        url = "https://api.census.gov/data/2022/acs/acs1"
+        url = f"https://api.census.gov/data/2022/acs/acs1"
         final_params.update({'get': 'NAME', 'for': 'us:1', 'q': keyword_query})
     else: return []
 
@@ -125,30 +135,36 @@ async def query_census(params: Dict[str, Any] = None, keyword_query: str = None)
             r = await client.get(url, params=final_params)
             r.raise_for_status()
             return [{"title": f"Census Data for '{keyword_query or 'parameterized search'}'", "url": str(r.url), "snippet": str(r.json()[:3])[:700]}]
-    except Exception: return []
+    except Exception as e:
+        print(f"Census API Error: {e}")
+        return []
 
 async def query_congress(keyword_query: str = None) -> List[Dict[str, Any]]:
     if not CONGRESS_API_KEY or not keyword_query: return []
-    params = {"api_key": CONGRESS_API_KEY, "q": keyword_query}
+    params = {"api_key": CONGRESS_API_KEY, "q": keyword_query, "limit": 1}
     url = "https://api.congress.gov/v3/bill"
     try:
         async with httpx.AsyncClient() as client:
             r = await client.get(url, params=params)
             r.raise_for_status()
             bills = r.json().get("bills", [])
-            return [{"title": bill.get('title'), "url": bill.get('url'), "snippet": f"Latest Action: {bill.get('latestAction', {}).get('text')}"} for bill in bills[:1]]
-    except Exception: return []
+            return [{"title": bill.get('title'), "url": bill.get('url'), "snippet": f"Latest Action: {bill.get('latestAction', {}).get('text')}"} for bill in bills]
+    except Exception as e:
+        print(f"Congress API Error: {e}")
+        return []
     
 async def query_datagov(keyword_query: str) -> List[Dict[str, str]]:
     if not DATA_GOV_API_KEY or not keyword_query: return []
-    params = {"api_key": DATA_GOV_API_KEY, "q": keyword_query}
+    params = {"api_key": DATA_GOV_API_KEY, "q": keyword_query, "limit": 1}
     url = "https://api.data.gov/catalog/v1"
     try:
         async with httpx.AsyncClient() as client:
             r = await client.get(url, params=params)
             r.raise_for_status()
-            return [{"title": item.get("title"), "url": item.get("@id"), "snippet": item.get("description", "")[:250]} for item in r.json().get("results", [])[:1]]
-    except Exception: return []
+            return [{"title": item.get("title"), "url": item.get("@id"), "snippet": item.get("description", "")[:250]} for item in r.json().get("results", [])]
+    except Exception as e:
+        print(f"Data.gov API Error: {e}")
+        return []
 
 async def execute_query_plan(plan: Dict, claim_type: str) -> List[Dict[str, Any]]:
     tier1_params = plan.get('tier1_params', {})
@@ -164,7 +180,7 @@ async def execute_query_plan(plan: Dict, claim_type: str) -> List[Dict[str, Any]
         tier1_results = await asyncio.gather(*tasks)
         results.extend([item for sublist in tier1_results for item in sublist if sublist])
 
-    if not results:
+    if not results and tier2_keywords:
         tasks = []
         for keyword in tier2_keywords:
             for source in sources_to_query:
@@ -183,10 +199,8 @@ async def execute_query_plan(plan: Dict, claim_type: str) -> List[Dict[str, Any]
 async def summarize_with_evidence(claim: str, sources: List[Dict[str, str]]) -> str:
     if not sources:
         return "No supporting government data could be found to verify this claim."
-    
     unique_sources = {s['url']: s for s in sources}.values()
     context = "\n---\n".join([f"Source Title: {s['title']}\nURL: {s['url']}\nSnippet: {s['snippet']}" for s in unique_sources])
-    
     prompt = (
         "You are a meticulous and impartial fact-checker. Your sole responsibility is to analyze the provided evidence from U.S. government data sources and synthesize a definitive conclusion about the user's claim. Do not introduce outside information.\n\n"
         "YOUR METHODOLOGY (CHAIN-OF-THOUGHT):\n"

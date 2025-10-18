@@ -5,4 +5,4 @@ Disinformation erodes public trust, and traditional fact-checking is slow. Stelt
 
 Highlight any text, and our browser extension provides an evidence-based verdict, a confidence score, and links to the primary sources. This reduces verification time from hours to seconds, empowering users to challenge misinformation with auditable proof.
 
-Build better - Steltar
+Systems that matter - Steltar

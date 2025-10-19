@@ -68,14 +68,14 @@ async def analyze_claim_for_api_plan(claim: str) -> Dict[str, Any]:
         "YOUR RESPONSE (Must be a single, valid JSON object):\n"
         "{\n"
         '  "claim_normalized": "Your clear, verifiable statement.",\n'
-        '  "claim_type": "Your classification.",\n'
+        '  "claim_type": "Your classification. If the claim cannot be verified by BEA, Census, or Congress, classify it as \'Other\' and proceed to generate keywords.",\n'
         '  "api_plan": {\n'
         '    "tier1_params": {\n'
         '      "bea": { "DataSetName": "...", "TableName": "...", "Frequency": "...", "Year": "..." } or null,\n'
         '      "census": { "endpoint": "...", "params": { "get": "...", "for": "..." } } or null,\n'
         '      "congress": null\n'
         '    },\n'
-        '    "tier2_keywords": ["A list of specific keyword search queries."]\n'
+        '    "tier2_keywords": ["A list of specific keyword search queries derived from the claim, which will be used for a broader search on data.gov. Always generate relevant keywords, even if the claim_type is \'Other\'."]\n'
         '  }\n'
         "}"
     )
@@ -250,4 +250,5 @@ async def verify(req: VerifyRequest):
         "sources": sources_results,
         "debug_plan": api_plan
     }
+
 

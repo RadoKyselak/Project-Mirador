@@ -55,14 +55,19 @@ async def analyze_claim_for_api_plan(claim: str) -> Dict[str, Any]:
     prompt = (
         "You are a world-class research analyst and a U.S. government data expert. Your task is to deconstruct a user's factual claim into a precise, multi-tiered query plan to verify it using specific government APIs. You must act as an expert system, selecting the exact datasets and parameters needed.\n\n"
         "AVAILABLE APIs & DATASETS:\n"
-        "1. BEA (Bureau of Economic Analysis): For national economic data (GDP, income, spending).\n"
-        "   - Key Datasets: 'NIPA' (National Income and Product Accounts), 'NIUnderlyingDetail'.\n"
-        "   - Key Tables: 'T10101' (GDP), 'T20305' (Personal Income), 'T31600' (Govt Spending by Function).\n"
-        "   - Required Params: `DataSetName`, `TableName`, `Frequency`, `Year`.\n"
-        "2. Census Bureau: For demographic and population data.\n"
-        "   - Key Endpoints: '/data/2023/pep/population' (Population Estimates), '/data/timeseries/poverty/histpov2' (Historical Poverty).\n"
-        "   - Required Params: `endpoint`, `params` (which includes `get` and `for`).\n"
-        "3. Congress.gov: For legislative data (bills, laws).\n"
+        "1. BEA (Bureau of Economic Analysis): For national, regional, and industry-specific economic data.\n"
+        "   - Key Datasets: 'NIPA' (National Income and Product Accounts), 'NIUnderlyingDetail', 'Regional', 'FixedAssets', 'GDPbyIndustry'.\n"
+        "   - Key Tables (NIPA): 'T10101' (GDP), 'T20305' (Personal Income), 'T31600' (Govt Spending by Function), 'T70500' (Relation of GDP, GNP, and NNP).\n"
+        "   - Key Tables (Regional): 'CAINC1' (Personal Income Summary), 'CAEMP25N' (Total Full-Time and Part-Time Employment by NAICS Industry), 'CAGDP1' (Gross Domestic Product Summary).\n"
+        "   - Required Params: `DataSetName`, `TableName` or `LineCode`, `GeoFips`, `Frequency`, `Year`.\n"
+        "2. Census Bureau: For a wide range of demographic, economic, and social data.\n"
+        "   - Key Endpoints (Demographic): '/data/2023/pep/population' (Population Estimates), '/data/acs/acs1' (American Community Survey 1-Year), '/data/dec/decennial' (Decennial Census).\n"
+        "   - Key Endpoints (Economic): '/data/timeseries/poverty/histpov2' (Historical Poverty), '/data/cbp/2021' (County Business Patterns), '/data/ewks/2021' (Annual Survey of Entrepreneurs).\n"
+        "   - Required Params: `endpoint`, `params` (which includes `get`, `for`, `in`, etc.).\n"
+        "3. Congress.gov: For U.S. federal legislative information.\n"
+        "   - Key Endpoints: '/bill', '/amendment', '/treaty', '/committee-report', '/nomination'.\n"
+        "   - Required Params: `endpoint`, `query` (a keyword search string).\n"
+        "4. Data.gov: A comprehensive catalog of U.S. government data, best used for keyword searches on topics not covered by the specialized APIs above.\n"
         "   - Required Params: `query` (a keyword search string).\n\n"
         f"USER CLAIM: '''{claim}'''\n\n"
         "YOUR RESPONSE (Must be a single, valid JSON object):\n"
@@ -247,6 +252,7 @@ async def verify(req: VerifyRequest):
         "sources": sources_results,
         "debug_plan": api_plan
     }
+
 
 
 

@@ -96,6 +96,8 @@ def pick_sources_from_type(claim_type: str) -> List[str]:
     return mapping.get(claim_type, mapping.get("default"))
 
 async def query_bea(params: Dict[str, Any] = None) -> List[Dict[str, Any]]:
+    if not BEA_API_KEY:
+        raise HTTPException(status_code=500, detail="BEA_API_KEY is not configured on the server.")
     if not BEA_API_KEY or not params: return []
     final_params = {
         'UserID': BEA_API_KEY,
@@ -125,6 +127,8 @@ async def query_bea(params: Dict[str, Any] = None) -> List[Dict[str, Any]]:
         return []
 
 async def query_census(params: Dict[str, Any] = None, keyword_query: str = None) -> List[Dict[str, Any]]:
+    if not CENSUS_API_KEY:
+        raise HTTPException(status_code=500, detail="CENSUS_API_KEY is not configured on the server.")
     if not CENSUS_API_KEY: return []
     final_params = {'key': CENSUS_API_KEY}
     if params:
@@ -145,6 +149,8 @@ async def query_census(params: Dict[str, Any] = None, keyword_query: str = None)
         return []
 
 async def query_congress(keyword_query: str = None) -> List[Dict[str, Any]]:
+    if not CONGRESS_API_KEY:
+        raise HTTPException(status_code=500, detail="CONGRESS_API_KEY is not configured on the server.")
     if not CONGRESS_API_KEY or not keyword_query: return []
     params = {"api_key": CONGRESS_API_KEY, "q": keyword_query, "limit": 1}
     url = "https://api.congress.gov/v3/bill"
@@ -159,6 +165,9 @@ async def query_congress(keyword_query: str = None) -> List[Dict[str, Any]]:
         return []
     
 async def query_datagov(keyword_query: str) -> List[Dict[str, str]]:
+    async def query_datagov(keyword_query: str) -> List[Dict[str, str]]:
+    if not DATA_GOV_API_KEY:
+        raise HTTPException(status_code=500, detail="DATA_GOV_API_KEY is not configured on the server.")
     if not DATA_GOV_API_KEY or not keyword_query: return []
     params = {"api_key": DATA_GOV_API_KEY, "q": keyword_query, "limit": 5}
     url = "https://api.data.gov/catalog/v1"
@@ -252,6 +261,7 @@ async def verify(req: VerifyRequest):
         "sources": sources_results,
         "debug_plan": api_plan
     }
+
 
 
 

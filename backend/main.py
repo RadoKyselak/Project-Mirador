@@ -155,7 +155,7 @@ async def query_congress(keyword_query: str = None) -> List[Dict[str, Any]]:
     
 async def query_datagov(keyword_query: str) -> List[Dict[str, str]]:
     if not DATA_GOV_API_KEY or not keyword_query: return []
-    params = {"api_key": DATA_GOV_API_KEY, "q": keyword_query, "limit": 1}
+    params = {"api_key": DATA_GOV_API_KEY, "q": keyword_query, "limit": 5}
     url = "https://api.data.gov/catalog/v1"
     try:
         async with httpx.AsyncClient() as client:
@@ -247,6 +247,7 @@ async def verify(req: VerifyRequest):
         "sources": sources_results,
         "debug_plan": api_plan
     }
+
 
 
 

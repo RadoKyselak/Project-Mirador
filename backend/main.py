@@ -173,26 +173,25 @@ async def execute_query_plan(plan: Dict, claim_type: str) -> List[Dict[str, Any]
     tasks, results = [], []
     
     for source in sources_to_query:
-        if source == "BEA" and tier1_params.get("bea"): tasks.append(query_bea(params=tier1_params.get("bea")))
-        if source == "CENSUS" and tier1_params.get("census"): tasks.append(query_census(params=tier1_params.get("census")))
+        if source == "BEA" and tier1_params.get("bea"):
+            tasks.append(query_bea(params=tier1_params.get("bea")))
+        if source == "CENSUS" and tier1_params.get("census"):
+            tasks.append(query_census(params=tier1_params.get("census")))
 
-    if tasks:
-        tier1_results = await asyncio.gather(*tasks)
-        results.extend([item for sublist in tier1_results for item in sublist if sublist])
-
-    if not results and tier2_keywords:
-        tasks = []
+    if tier2_keywords:
         for keyword in tier2_keywords:
             for source in sources_to_query:
-                if source == "CENSUS": tasks.append(query_census(keyword_query=keyword))
-                if source == "CONGRESS": tasks.append(query_congress(keyword_query=keyword))
-        
-        if tasks:
-            tier2_results = await asyncio.gather(*tasks)
-            results.extend([item for sublist in tier2_results for item in sublist if sublist])
+                if source == "CENSUS":
+                    tasks.append(query_census(keyword_query=keyword))
+                if source == "CONGRESS":
+                    tasks.append(query_congress(keyword_query=keyword))
+    
+    if tier2_keywords:
+        tasks.append(query_datagov(tier2_keywords[0]))
 
-    if not results and tier2_keywords:
-        results.extend(await query_datagov(tier2_keywords[0]))
+    if tasks:
+        query_results = await asyncio.gather(*tasks)
+        results.extend([item for sublist in query_results for item in sublist if sublist])
         
     return results
 
@@ -251,3 +250,4 @@ async def verify(req: VerifyRequest):
         "sources": sources_results,
         "debug_plan": api_plan
     }
+

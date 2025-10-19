@@ -165,7 +165,6 @@ async def query_datagov(keyword_query: str) -> List[Dict[str, str]]:
     except Exception as e:
         print(f"Data.gov API Error: {e}")
         return []
-
 async def execute_query_plan(plan: Dict, claim_type: str) -> List[Dict[str, Any]]:
     tier1_params = plan.get('tier1_params', {})
     tier2_keywords = plan.get('tier2_keywords', [])
@@ -177,24 +176,22 @@ async def execute_query_plan(plan: Dict, claim_type: str) -> List[Dict[str, Any]
             tasks.append(query_bea(params=tier1_params.get("bea")))
         if source == "CENSUS" and tier1_params.get("census"):
             tasks.append(query_census(params=tier1_params.get("census")))
-
+    
     if tier2_keywords:
         for keyword in tier2_keywords:
+            tasks.append(query_datagov(keyword))
             for source in sources_to_query:
                 if source == "CENSUS":
                     tasks.append(query_census(keyword_query=keyword))
                 if source == "CONGRESS":
                     tasks.append(query_congress(keyword_query=keyword))
-    
-    if tier2_keywords:
-        tasks.append(query_datagov(tier2_keywords[0]))
 
     if tasks:
         query_results = await asyncio.gather(*tasks)
         results.extend([item for sublist in query_results for item in sublist if sublist])
         
     return results
-
+    
 async def summarize_with_evidence(claim: str, sources: List[Dict[str, str]]) -> str:
     if not sources:
         return "No supporting government data could be found to verify this claim."
@@ -250,5 +247,6 @@ async def verify(req: VerifyRequest):
         "sources": sources_results,
         "debug_plan": api_plan
     }
+
 
 

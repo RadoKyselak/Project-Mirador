@@ -5,7 +5,6 @@ from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import httpx
-from urllib.parse import urlencode
 import json
 
 app = FastAPI()
@@ -18,11 +17,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Simplified environment variables
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 DATA_GOV_API_KEY = os.getenv("DATA_GOV_API_KEY")
-BEA_API_KEY = os.getenv("BEA_API_KEY")
-CENSUS_API_KEY = os.getenv("CENSUS_API_KEY")
-CONGRESS_API_KEY = os.getenv("CONGRESS_API_KEY")
 
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 GEMINI_ENDPOINT = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
@@ -52,127 +49,24 @@ async def call_gemini(prompt: str) -> Dict[str, Any]:
         raise HTTPException(status_code=500, detail=f"Error communicating with Gemini: {str(e)}")
 
 async def analyze_claim_for_api_plan(claim: str) -> Dict[str, Any]:
+    # Simplified prompt focusing only on keyword generation for Data.gov
     prompt = (
-        "You are a world-class research analyst and a U.S. government data expert. Your task is to deconstruct a user's factual claim into a precise, multi-tiered query plan to verify it using specific government APIs. You must act as an expert system, selecting the exact datasets and parameters needed.\n\n"
-        "AVAILABLE APIs & DATASETS:\n"
-        "1. BEA (Bureau of Economic Analysis): For national, regional, and industry-specific economic data.\n"
-        "   - Key Datasets: 'NIPA' (National Income and Product Accounts), 'NIUnderlyingDetail', 'Regional', 'FixedAssets', 'GDPbyIndustry'.\n"
-        "   - Key Tables (NIPA): 'T10101' (GDP), 'T20305' (Personal Income), 'T31600' (Govt Spending by Function), 'T70500' (Relation of GDP, GNP, and NNP).\n"
-        "   - Key Tables (Regional): 'CAINC1' (Personal Income Summary), 'CAEMP25N' (Total Full-Time and Part-Time Employment by NAICS Industry), 'CAGDP1' (Gross Domestic Product Summary).\n"
-        "   - Required Params: `DataSetName`, `TableName` or `LineCode`, `GeoFips`, `Frequency`, `Year`.\n"
-        "2. Census Bureau: For a wide range of demographic, economic, and social data.\n"
-        "   - Key Endpoints (Demographic): '/data/2023/pep/population' (Population Estimates), '/data/acs/acs1' (American Community Survey 1-Year), '/data/dec/decennial' (Decennial Census).\n"
-        "   - Key Endpoints (Economic): '/data/timeseries/poverty/histpov2' (Historical Poverty), '/data/cbp/2021' (County Business Patterns), '/data/ewks/2021' (Annual Survey of Entrepreneurs).\n"
-        "   - Required Params: `endpoint`, `params` (which includes `get`, `for`, `in`, etc.).\n"
-        "3. Congress.gov: For U.S. federal legislative information.\n"
-        "   - Key Endpoints: '/bill', '/amendment', '/treaty', '/committee-report', '/nomination'.\n"
-        "   - Required Params: `endpoint`, `query` (a keyword search string).\n"
-        "4. Data.gov: A comprehensive catalog of U.S. government data, best used for keyword searches on topics not covered by the specialized APIs above.\n"
-        "   - Required Params: `query` (a keyword search string).\n\n"
+        "You are a world-class research analyst and a U.S. government data expert. Your task is to deconstruct a user's factual claim into a list of precise keyword queries to search on the Data.gov API.\n\n"
         f"USER CLAIM: '''{claim}'''\n\n"
         "YOUR RESPONSE (Must be a single, valid JSON object):\n"
         "{\n"
-        '  "claim_normalized": "Your clear, verifiable statement.",\n'
-        '  "claim_type": "Your classification. If the claim cannot be verified by BEA, Census, or Congress, classify it as \'Other\' and proceed to generate keywords.",\n'
-        '  "api_plan": {\n'
-        '    "tier1_params": {\n'
-        '      "bea": { "DataSetName": "...", "TableName": "...", "Frequency": "...", "Year": "..." } or null,\n'
-        '      "census": { "endpoint": "...", "params": { "get": "...", "for": "..." } } or null,\n'
-        '      "congress": null\n'
-        '    },\n'
-        '    "tier2_keywords": ["A list of specific keyword search queries derived from the claim, which will be used for a broader search on data.gov. Always generate relevant keywords, even if the claim_type is \'Other\'."]\n'
-        '  }\n'
+        '  "claim_normalized": "Your clear, verifiable statement of the claim.",\n'
+        '  "keywords": ["A list of 3-5 specific keyword search queries to find relevant datasets on Data.gov."]\n'
         "}"
     )
     res = await call_gemini(prompt)
     text = res["text"].strip().replace("```json", "").replace("```", "")
     try:
         return json.loads(text)
-    except Exception:
-        return {"claim_normalized": claim, "claim_type": "qualitative", "api_plan": {"tier1_params": {}, "tier2_keywords": [claim]}}
+    except json.JSONDecodeError:
+        # Fallback if the model fails to generate valid JSON
+        return {"claim_normalized": claim, "keywords": [claim]}
 
-def pick_sources_from_type(claim_type: str) -> List[str]:
-    sources = ["DATA.GOV"]
-    
-    if claim_type == "quantitative":
-        sources.extend(["BEA", "CENSUS"])
-    elif claim_type == "factual":
-        sources.append("CONGRESS")
-        
-    return sources
-
-async def query_bea(params: Dict[str, Any] = None) -> List[Dict[str, Any]]:
-    if not BEA_API_KEY:
-        raise HTTPException(status_code=500, detail="BEA_API_KEY is not configured on the server.")
-    if not params:
-        return []
-    final_params = {
-        'UserID': BEA_API_KEY,
-        'method': 'GetData',
-        'ResultFormat': 'json',
-        'DataSetName': params.get('DataSetName'),
-        'TableName': params.get('TableName'),
-        'Frequency': params.get('Frequency'),
-        'Year': params.get('Year'),
-        'LineCode': params.get('LineCode')
-    }
-    
-    url = "https://apps.bea.gov/api/data"
-    try:
-        async with httpx.AsyncClient() as client:
-            r = await client.get(url, params=final_params)
-            r.raise_for_status()
-            data = r.json().get('BEAAPI', {}).get('Results', {})
-            results = data.get('Data', [])
-            snippets = []
-            for item in results:
-                desc = item.get('LineDescription', 'Data')
-                snippet = f"{desc} for {item.get('TimePeriod')} was ${item.get('DataValue')} billion."
-                snippets.append(snippet)
-            if not snippets: return []
-            return [{"title": f"BEA Dataset: {params.get('DataSetName')} - {params.get('TableName')}", "url": str(r.url), "snippet": " ".join(snippets)}]
-    except Exception as e:
-        print(f"BEA API Error: {e}")
-        return []
-        
-async def query_census(params: Dict[str, Any] = None, keyword_query: str = None) -> List[Dict[str, Any]]:
-    if not CENSUS_API_KEY:
-        raise HTTPException(status_code=500, detail="CENSUS_API_KEY is not configured on the server.")
-    if not params and not keyword_query:
-        return []
-    final_params = {'key': CENSUS_API_KEY}
-    if params:
-        url = f"https://api.census.gov{params.get('endpoint')}"
-        final_params.update(params.get('params', {}))
-    elif keyword_query:
-        url = f"https://api.census.gov/data/2022/acs/acs1"
-        final_params.update({'get': 'NAME', 'for': 'us:1', 'q': keyword_query})
-    try:
-        async with httpx.AsyncClient() as client:
-            r = await client.get(url, params=final_params)
-            r.raise_for_status()
-            return [{"title": f"Census Data for '{keyword_query or 'parameterized search'}'", "url": str(r.url), "snippet": str(r.json()[:3])[:700]}]
-    except Exception as e:
-        print(f"Census API Error: {e}")
-        return []
-
-async def query_congress(keyword_query: str = None) -> List[Dict[str, Any]]:
-    if not CONGRESS_API_KEY:
-        raise HTTPException(status_code=500, detail="CONGRESS_API_KEY is not configured on the server.")
-    if not keyword_query:
-        return []
-    params = {"api_key": CONGRESS_API_KEY, "q": keyword_query, "limit": 1}
-    url = "https://api.congress.gov/v3/bill"
-    try:
-        async with httpx.AsyncClient() as client:
-            r = await client.get(url, params=params)
-            r.raise_for_status()
-            bills = r.json().get("bills", [])
-            return [{"title": bill.get('title'), "url": bill.get('url'), "snippet": f"Latest Action: {bill.get('latestAction', {}).get('text')}"} for bill in bills]
-    except Exception as e:
-        print(f"Congress API Error: {e}")
-        return []
-    
 async def query_datagov(keyword_query: str) -> List[Dict[str, str]]:
     if not DATA_GOV_API_KEY:
         raise HTTPException(status_code=500, detail="DATA_GOV_API_KEY is not configured on the server.")
@@ -188,36 +82,23 @@ async def query_datagov(keyword_query: str) -> List[Dict[str, str]]:
     except Exception as e:
         print(f"Data.gov API Error: {e}")
         return []
-async def execute_query_plan(plan: Dict, claim_type: str) -> List[Dict[str, Any]]:
-    tier1_params = plan.get('tier1_params', {})
-    tier2_keywords = plan.get('tier2_keywords', [])
-    sources_to_query = pick_sources_from_type(claim_type)
-    tasks, results = [], []
-    
-    for source in sources_to_query:
-        if source == "BEA" and tier1_params.get("bea"):
-            tasks.append(query_bea(params=tier1_params.get("bea")))
-        if source == "CENSUS" and tier1_params.get("census"):
-            tasks.append(query_census(params=tier1_params.get("census")))
-    
-    if tier2_keywords:
-        for keyword in tier2_keywords:
-            tasks.append(query_datagov(keyword))
-            for source in sources_to_query:
-                if source == "CENSUS":
-                    tasks.append(query_census(keyword_query=keyword))
-                if source == "CONGRESS":
-                    tasks.append(query_congress(keyword_query=keyword))
 
-    if tasks:
-        query_results = await asyncio.gather(*tasks)
-        results.extend([item for sublist in query_results for item in sublist if sublist])
+async def execute_query_plan(plan: Dict) -> List[Dict[str, Any]]:
+    keywords = plan.get('keywords', [])
+    if not keywords:
+        return []
         
+    tasks = [query_datagov(keyword) for keyword in keywords]
+    query_results = await asyncio.gather(*tasks)
+    
+    # Flatten the list of lists and remove any empty results
+    results = [item for sublist in query_results for item in sublist if sublist]
     return results
     
 async def summarize_with_evidence(claim: str, sources: List[Dict[str, str]]) -> str:
     if not sources:
         return "No supporting government data could be found to verify this claim."
+    # Deduplicate sources based on URL
     unique_sources = {s['url']: s for s in sources}.values()
     context = "\n---\n".join([f"Source Title: {s['title']}\nURL: {s['url']}\nSnippet: {s['snippet']}" for s in unique_sources])
     prompt = (
@@ -252,10 +133,8 @@ async def verify(req: VerifyRequest):
     analysis = await analyze_claim_for_api_plan(claim)
     
     claim_norm = analysis.get("claim_normalized")
-    claim_type = analysis.get("claim_type")
-    api_plan = analysis.get("api_plan", {})
     
-    sources_results = await execute_query_plan(api_plan, claim_type)
+    sources_results = await execute_query_plan(analysis)
     
     verdict, confidence = ("Inconclusive", 0.5) if not sources_results else ("Verifiable", 0.95)
     summary = await summarize_with_evidence(claim_norm, sources_results)
@@ -263,21 +142,9 @@ async def verify(req: VerifyRequest):
     return {
         "claim_original": claim,
         "claim_normalized": claim_norm,
-        "claim_type": claim_type,
         "verdict": verdict,
         "confidence": confidence,
         "summary": summary,
         "sources": sources_results,
-        "debug_plan": api_plan
+        "debug_plan": analysis
     }
-
-
-
-
-
-
-
-
-
-
-

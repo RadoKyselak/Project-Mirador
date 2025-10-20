@@ -132,7 +132,7 @@ async def query_census(params: Dict[str, Any] = None, keyword_query: str = None)
     if not CENSUS_API_KEY:
         raise HTTPException(status_code=500, detail="CENSUS_API_KEY is not configured on the server.")
     if not params and not keyword_query:
-        return []        
+        return []
     final_params = {'key': CENSUS_API_KEY}
     if params:
         url = f"https://api.census.gov{params.get('endpoint')}"
@@ -140,8 +140,6 @@ async def query_census(params: Dict[str, Any] = None, keyword_query: str = None)
     elif keyword_query:
         url = f"https://api.census.gov/data/2022/acs/acs1"
         final_params.update({'get': 'NAME', 'for': 'us:1', 'q': keyword_query})
-    else: return []
-
     try:
         async with httpx.AsyncClient() as client:
             r = await client.get(url, params=final_params)
@@ -172,7 +170,7 @@ async def query_datagov(keyword_query: str) -> List[Dict[str, str]]:
     if not DATA_GOV_API_KEY:
         raise HTTPException(status_code=500, detail="DATA_GOV_API_KEY is not configured on the server.")
     if not keyword_query:
-        return [] 
+        return []
     params = {"api_key": DATA_GOV_API_KEY, "q": keyword_query, "limit": 5}
     url = "https://api.data.gov/catalog/v1"
     try:
@@ -235,7 +233,7 @@ async def summarize_with_evidence(claim: str, sources: List[Dict[str, str]]) -> 
     try:
         parsed = json.loads(text)
         return f"{parsed.get('summary', '')} {parsed.get('justification', '')}"
-    except Exception:
+    except json.JSONDecodeError:
         return "Could not generate a conclusive summary based on the available data."
 
 @app.post("/verify")
@@ -265,6 +263,7 @@ async def verify(req: VerifyRequest):
         "sources": sources_results,
         "debug_plan": api_plan
     }
+
 
 
 

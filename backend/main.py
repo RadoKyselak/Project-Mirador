@@ -242,8 +242,21 @@ async def verify(req: VerifyRequest):
     
     sources_results = await execute_query_plan(api_plan, claim_type)
     
-    verdict, confidence = ("Inconclusive", 0.5) if not sources_results else ("Verifiable", 0.95)
     summary = await summarize_with_evidence(claim_norm, sources_results)
+    
+    verdict = "Inconclusive"
+    confidence = 0.5
+    
+    summary_lower = summary.lower()
+    if "data supports" in summary_lower or "data confirms" in summary_lower:
+        verdict = "Verifiable"
+        confidence = 0.95
+    elif "data contradicts" in summary_lower:
+        verdict = "Contradicted"
+        confidence = 0.95
+    elif "insufficient to verify" in summary_lower:
+        verdict = "Inconclusive"
+        confidence = 0.6
     
     return {
         "claim_original": claim,
@@ -255,3 +268,4 @@ async def verify(req: VerifyRequest):
         "sources": sources_results,
         "debug_plan": api_plan
     }
+

@@ -98,8 +98,9 @@ def pick_sources_from_type(claim_type: str) -> List[str]:
 async def query_bea(params: Dict[str, Any] = None) -> List[Dict[str, Any]]:
     if not BEA_API_KEY:
         raise HTTPException(status_code=500, detail="BEA_API_KEY is not configured on the server.")
-    if not keyword_query:
-        return []    
+    if not params:
+        return []
+        
     final_params = {
         'UserID': BEA_API_KEY,
         'method': 'GetData',
@@ -130,8 +131,8 @@ async def query_bea(params: Dict[str, Any] = None) -> List[Dict[str, Any]]:
 async def query_census(params: Dict[str, Any] = None, keyword_query: str = None) -> List[Dict[str, Any]]:
     if not CENSUS_API_KEY:
         raise HTTPException(status_code=500, detail="CENSUS_API_KEY is not configured on the server.")
-    if not keyword_query:
-        return []    
+    if not params and not keyword_query:
+        return []        
     final_params = {'key': CENSUS_API_KEY}
     if params:
         url = f"https://api.census.gov{params.get('endpoint')}"
@@ -154,7 +155,7 @@ async def query_congress(keyword_query: str = None) -> List[Dict[str, Any]]:
     if not CONGRESS_API_KEY:
         raise HTTPException(status_code=500, detail="CONGRESS_API_KEY is not configured on the server.")
     if not keyword_query:
-        return []    
+        return []
     params = {"api_key": CONGRESS_API_KEY, "q": keyword_query, "limit": 1}
     url = "https://api.congress.gov/v3/bill"
     try:
@@ -171,7 +172,7 @@ async def query_datagov(keyword_query: str) -> List[Dict[str, str]]:
     if not DATA_GOV_API_KEY:
         raise HTTPException(status_code=500, detail="DATA_GOV_API_KEY is not configured on the server.")
     if not keyword_query:
-        return []       
+        return [] 
     params = {"api_key": DATA_GOV_API_KEY, "q": keyword_query, "limit": 5}
     url = "https://api.data.gov/catalog/v1"
     try:
@@ -264,6 +265,7 @@ async def verify(req: VerifyRequest):
         "sources": sources_results,
         "debug_plan": api_plan
     }
+
 
 
 

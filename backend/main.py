@@ -92,18 +92,20 @@ async def analyze_claim_for_api_plan(claim: str) -> Dict[str, Any]:
         return {"claim_normalized": claim, "claim_type": "qualitative", "api_plan": {"tier1_params": {}, "tier2_keywords": [claim]}}
 
 def pick_sources_from_type(claim_type: str) -> List[str]:
-    mapping = {"quantitative": ["BEA", "CENSUS"], "factual": ["CONGRESS"], "default": ["DATA.GOV"]}
-    return mapping.get(claim_type, mapping.get("default"))
-
-# In backend/main.py
+    sources = ["DATA.GOV"]
+    
+    if claim_type == "quantitative":
+        sources.extend(["BEA", "CENSUS"])
+    elif claim_type == "factual":
+        sources.append("CONGRESS")
+        
+    return sources
 
 async def query_bea(params: Dict[str, Any] = None) -> List[Dict[str, Any]]:
     if not BEA_API_KEY:
         raise HTTPException(status_code=500, detail="BEA_API_KEY is not configured on the server.")
     if not params:
         return []
-        
-    # Correctly build the parameters, now including LineCode
     final_params = {
         'UserID': BEA_API_KEY,
         'method': 'GetData',
@@ -112,7 +114,6 @@ async def query_bea(params: Dict[str, Any] = None) -> List[Dict[str, Any]]:
         'TableName': params.get('TableName'),
         'Frequency': params.get('Frequency'),
         'Year': params.get('Year'),
-        # BUG FIX: Add the LineCode to the request parameters
         'LineCode': params.get('LineCode')
     }
     
@@ -269,6 +270,7 @@ async def verify(req: VerifyRequest):
         "sources": sources_results,
         "debug_plan": api_plan
     }
+
 
 
 

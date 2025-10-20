@@ -95,12 +95,15 @@ def pick_sources_from_type(claim_type: str) -> List[str]:
     mapping = {"quantitative": ["BEA", "CENSUS"], "factual": ["CONGRESS"], "default": ["DATA.GOV"]}
     return mapping.get(claim_type, mapping.get("default"))
 
+# In backend/main.py
+
 async def query_bea(params: Dict[str, Any] = None) -> List[Dict[str, Any]]:
     if not BEA_API_KEY:
         raise HTTPException(status_code=500, detail="BEA_API_KEY is not configured on the server.")
     if not params:
         return []
         
+    # Correctly build the parameters, now including LineCode
     final_params = {
         'UserID': BEA_API_KEY,
         'method': 'GetData',
@@ -108,8 +111,11 @@ async def query_bea(params: Dict[str, Any] = None) -> List[Dict[str, Any]]:
         'DataSetName': params.get('DataSetName'),
         'TableName': params.get('TableName'),
         'Frequency': params.get('Frequency'),
-        'Year': params.get('Year')
+        'Year': params.get('Year'),
+        # BUG FIX: Add the LineCode to the request parameters
+        'LineCode': params.get('LineCode')
     }
+    
     url = "https://apps.bea.gov/api/data"
     try:
         async with httpx.AsyncClient() as client:
@@ -127,7 +133,7 @@ async def query_bea(params: Dict[str, Any] = None) -> List[Dict[str, Any]]:
     except Exception as e:
         print(f"BEA API Error: {e}")
         return []
-
+        
 async def query_census(params: Dict[str, Any] = None, keyword_query: str = None) -> List[Dict[str, Any]]:
     if not CENSUS_API_KEY:
         raise HTTPException(status_code=500, detail="CENSUS_API_KEY is not configured on the server.")
@@ -263,6 +269,7 @@ async def verify(req: VerifyRequest):
         "sources": sources_results,
         "debug_plan": api_plan
     }
+
 
 
 

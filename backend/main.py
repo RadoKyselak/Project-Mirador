@@ -99,12 +99,14 @@ async def query_bea(params: Dict[str, Any] = None) -> List[Dict[str, Any]]:
         raise HTTPException(status_code=500, detail="BEA_API_KEY is not configured on the server.")
     if not params:
         return []
+        
     final_params = {
         'UserID': BEA_API_KEY, 'method': 'GetData', 'ResultFormat': 'json',
         'DataSetName': params.get('DataSetName'), 'TableName': params.get('TableName'),
         'Frequency': params.get('Frequency'), 'Year': params.get('Year'),
         'LineCode': params.get('LineCode')
     }
+    
     url = "https://apps.bea.gov/api/data"
     try:
         async with httpx.AsyncClient() as client:
@@ -112,9 +114,14 @@ async def query_bea(params: Dict[str, Any] = None) -> List[Dict[str, Any]]:
             r.raise_for_status()
             data = r.json().get('BEAAPI', {}).get('Results', {})
             results = data.get('Data', [])
-            snippets = [f"{item.get('LineDescription', 'Data')} for {item.get('TimePeriod')} was ${item.get('DataValue')} billion." for item in results]
-            if not snippets: return []
-            return [{"title": f"BEA Dataset: {params.get('DataSetName')} - {params.get('TableName')}", "url": str(r.url), "snippet": " ".join(snippets)}]
+            
+            if results:
+                item = results[0]
+                desc = item.get('LineDescription', 'Data')
+                snippet = f"{desc} for {item.get('TimePeriod')} was ${item.get('DataValue')} billion."
+                return [{"title": f"BEA Dataset: {params.get('DataSetName')} - {params.get('TableName')}", "url": str(r.url), "snippet": snippet}]
+            else:
+                return []
     except Exception as e:
         print(f"BEA API Error: {e}")
         return []
@@ -268,4 +275,5 @@ async def verify(req: VerifyRequest):
         "sources": sources_results,
         "debug_plan": api_plan
     }
+
 

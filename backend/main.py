@@ -47,7 +47,7 @@ GEMINI_ENDPOINT = f"https://generativelanguage.googleapis.com/v1beta/models/{GEM
 BEA_VALID_TABLES = {
     "T10101",  # GDP
     "T20305",  # Personal Income
-    "T31600",  # Govnment Spending by Function
+    "T31600",  # Government Spending by Function
     "T70500"   # Relation of GDP, GNP, and NNP
 }
 
@@ -424,4 +424,5 @@ async def verify(req: VerifyRequest):
         "debug_plan": api_plan,
         "debug_log": debug_errors
     }
+
 

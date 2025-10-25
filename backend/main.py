@@ -59,17 +59,32 @@ class VerifyRequest(BaseModel):
     claim: str
 
 def extract_json_block(text: str) -> Optional[Dict[str, Any]]:
-    match = re.search(r"\{.*\}", text, re.DOTALL)
-    if not match:
-        logger.warning(f"No JSON block found in LLM response text.")
+    if not text:
         return None
-    json_str = match.group(0)
-    try:
-        return json.loads(json_str)
-    except json.JSONDecodeError as e:
-        logger.error(f"Failed to decode JSON block: {e}")
-        logger.debug(f"Problematic JSON string: {json_str}")
+    match = re.search(r"\{.*?\}", text, re.DOTALL)
+    if match:
+        json_str = match.group(0)
+        try:
+            return json.loads(json_str)
+        except json.JSONDecodeError:
+            pass
+    start = text.find("{")
+    if start == -1:
         return None
+    depth = 0
+    for i in range(start, len(text)):
+        ch = text[i]
+        if ch == '{':
+            depth += 1
+        elif ch == '}':
+            depth -= 1
+            if depth == 0:
+                candidate = text[start: i + 1]
+                try:
+                    return json.loads(candidate)
+                except json.JSONDecodeError:
+                    return None
+    return None
 
 async def call_gemini(prompt: str) -> Dict[str, Any]:
     if not GEMINI_API_KEY:
@@ -84,7 +99,12 @@ async def call_gemini(prompt: str) -> Dict[str, Any]:
             r = await client.post(GEMINI_ENDPOINT, headers=headers, json=body)
             r.raise_for_status()
             data = r.json()
-            text = data.get("candidates", [{}])[0].get("content", {}).get("parts", [{}])[0].get("text", "")
+            text = ""
+            if isinstance(data.get("candidates"), list) and len(data["candidates"]) > 0:
+                cand = data["candidates"][0]
+                text = cand.get("content", {}).get("parts", [{}])[0].get("text", "") or cand.get("output", "")
+            if not text:
+                text = data.get("output", "") or data.get("text", "") or json.dumps(data)
             return {"raw": data, "text": text}
     except httpx.HTTPStatusError as e:
         logger.error(f"Gemini API HTTP error: {e.response.status_code} - {e.response.text}")
@@ -95,7 +115,7 @@ async def call_gemini(prompt: str) -> Dict[str, Any]:
 
 async def analyze_claim_for_api_plan(claim: str) -> Dict[str, Any]:
     prompt = (
-        "You are a world-class research analyst and a U.S. government data expert. Your task is to deconstruct a user's factual claim into a precise, multi-tiered query plan to verify it using specific government APIs. You must act as an expert system, selecting the exact datasets and parameters needed.\n\n"
+        "You are a world-class research analyst and a U.S. government data expert. Your task is to deconstruct a user's factual claim into a precise, multi-tiered query plan to verify it using specific government APIs.\n\n"
         "AVAILABLE APIs & DATASETS:\n"
         "1. BEA (Bureau of Economic Analysis): For national, regional, and industry-specific economic data.\n"
         "   - Key Datasets: 'NIPA' (National Income and Product Accounts), 'NIUnderlyingDetail', 'Regional', 'FixedAssets', 'GDPbyIndustry'.\n"
@@ -156,7 +176,7 @@ async def query_bea(params: Dict[str, Any] = None) -> List[Dict[str, Any]]:
         'Frequency': params.get('Frequency'), 'Year': params.get('Year'),
         'LineCode': params.get('LineCode')
     }
-    url = "https.apps.bea.gov/api/data"
+    url = "https://apps.bea.gov/api/data"
     try:
         async with httpx.AsyncClient(timeout=20.0) as client:
             r = await client.get(url, params={k: v for k, v in final_params.items() if v is not None})
@@ -184,11 +204,13 @@ async def query_census(params: Dict[str, Any] = None, keyword_query: str = None)
     
     final_params = {'key': CENSUS_API_KEY}
     if params:
-        url = f"https.api.census.gov{params.get('endpoint')}"
+        url = f"https://api.census.gov{params.get('endpoint')}"
         final_params.update(params.get('params', {}))
     else:
-        url = f"https.api.census.gov/data/2022/acs/acs1"
-        final_params.update({'get': 'NAME', 'for': 'us:1', 'q': keyword_query})
+        url = "https://api.census.gov/data/2022/acs/acs1"
+        final_params.update({'get': 'NAME', 'for': 'us:1'})
+        if keyword_query:
+            final_params.update({'q': keyword_query})
     
     try:
         async with httpx.AsyncClient(timeout=20.0) as client:
@@ -207,7 +229,7 @@ async def query_congress(keyword_query: str = None) -> List[Dict[str, Any]]:
     if not keyword_query: return []
     
     params = {"api_key": CONGRESS_API_KEY, "q": keyword_query, "limit": 1}
-    url = "https.api.congress.gov/v3/bill"
+    url = "https://api.congress.gov/v3/bill"
     try:
         async with httpx.AsyncClient(timeout=20.0) as client:
             r = await client.get(url, params=params)
@@ -226,7 +248,7 @@ async def query_datagov(keyword_query: str) -> List[Dict[str, str]]:
     if not keyword_query: return []
     
     params = {"api_key": DATA_GOV_API_KEY, "q": keyword_query, "limit": 3}
-    url = "https.api.data.gov/catalog/v1"
+    url = "https://api.data.gov/catalog/v1"
     try:
         async with httpx.AsyncClient(timeout=20.0) as client:
             r = await client.get(url, params=params)
@@ -291,17 +313,17 @@ async def summarize_with_evidence(claim: str, sources: List[Dict[str, str]]) -> 
     
     valid_sources = [s for s in sources if "error" not in s]
     if not valid_sources:
-         return default_summary
-         
+        return default_summary
+        
     unique_sources = {s['url']: s for s in valid_sources}.values()
     context = "\n---\n".join([f"Source Title: {s['title']}\nURL: {s['url']}\nSnippet: {s['snippet']}" for s in unique_sources])
     
     prompt = (
-        "You are a meticulous and impartial fact-checker. Your sole responsibility is to analyze the provided evidence from U.S. government data sources and synthesize a definitive conclusion about the user's claim. Do not introduce outside information.\n\n"
+        "You are a meticulous and impartial fact-checker. Your sole responsibility is to analyze the provided evidence from U.S. government data sources and synthesize a definitive conclusion about the claim.\n\n"
         "YOUR METHODOLOGY (CHAIN-OF-THOUGHT):\n"
         "1. First, review all evidence snippets. Identify the key data points relevant to the claim.\n"
         "2. Second, compare the data points to the user's claim.\n"
-        "3. Third, synthesize your findings into a concise, one-sentence summary that directly addresses the claim. Start with a clear concluding phrase (e.g., 'The data supports...', 'The data contradicts...', 'The available data is insufficient to...').\n"
+        "3. Third, synthesize your findings into a concise, one-sentence summary that directly addresses the claim. Start with a clear concluding phrase (e.g., 'The data supports...', 'The data contradicts...', 'The data is inconclusive...').\n"
         "4. Fourth, provide a brief (1-2 sentence) justification for your conclusion.\n"
         "5. Fifth, and most importantly, create a list of 'evidence_links'. For each key finding that supports your justification, you MUST link it directly to the 'URL' of the source snippet it came from.\n\n"
         f"USER'S CLAIM: '''{claim}'''\n\n"
@@ -392,7 +414,7 @@ async def verify(req: VerifyRequest):
     confidence_data = compute_confidence(sources_results, summary_text)
     confidence_val = confidence_data["confidence"]
     
-   summary_lower = summary_text.lower()
+    summary_lower = summary_text.lower()
     if "data supports" in summary_lower or "data confirms" in summary_lower:
         verdict = "Supported"
     elif "data contradicts" in summary_lower:
@@ -424,5 +446,3 @@ async def verify(req: VerifyRequest):
         "debug_plan": api_plan,
         "debug_log": debug_errors
     }
-
-

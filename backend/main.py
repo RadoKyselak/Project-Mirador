@@ -115,7 +115,7 @@ async def call_gemini(prompt: str) -> Dict[str, Any]:
 
 async def analyze_claim_for_api_plan(claim: str) -> Dict[str, Any]:
     prompt = (
-        "You are a world-class research analyst and a U.S. government data expert. Your task is to deconstruct a user's factual claim into a precise, multi-tiered query plan to verify it using specific government APIs.\n\n"
+        "You are a world-class research analyst and a U.S. government data expert. Your task is to deconstruct a user's factual claim into a precise, multi-tiered query plan to verify it using specific government APIs.\n"
         "AVAILABLE APIs & DATASETS:\n"
         "1. BEA (Bureau of Economic Analysis): For national, regional, and industry-specific economic data.\n"
         "   - Key Datasets: 'NIPA' (National Income and Product Accounts), 'NIUnderlyingDetail', 'Regional', 'FixedAssets', 'GDPbyIndustry'.\n"
@@ -158,9 +158,9 @@ async def analyze_claim_for_api_plan(claim: str) -> Dict[str, Any]:
 
 def pick_sources_from_type(claim_type: str) -> List[str]:
     sources = ["DATA.GOV"]
-    if claim_type == "quantitative":
+    if claim_type and "quantitative" in claim_type.lower():
         sources.extend(["BEA", "CENSUS"])
-    elif claim_type == "factual":
+    if claim_type and "factual" in claim_type.lower():
         sources.append("CONGRESS")
     return sources
 
@@ -190,6 +190,7 @@ async def query_bea(params: Dict[str, Any] = None) -> List[Dict[str, Any]]:
                 snippet = f"{desc} for {item.get('TimePeriod')} was ${item.get('DataValue')} billion."
                 return [{"title": f"BEA Dataset: {params.get('DataSetName')} - {params.get('TableName')}", "url": str(r.url), "snippet": snippet}]
             else:
+                logger.info(f"BEA returned no Data entries for params: {final_params}")
                 return []
     except httpx.HTTPStatusError as e:
         logger.error(f"BEA API HTTP Error: {e.response.status_code} - {e.response.text}")
@@ -244,16 +245,28 @@ async def query_congress(keyword_query: str = None) -> List[Dict[str, Any]]:
         return [{"error": str(e), "source": "CONGRESS", "status": "failed"}]
 
 async def query_datagov(keyword_query: str) -> List[Dict[str, str]]:
-    if not DATA_GOV_API_KEY: return [{"error": "DATA_GOV_API_KEY is not configured", "source": "DATA.GOV", "status": "failed"}]
+    if not DATA_GOV_API_KEY:
+        logger.debug("DATA_GOV_API_KEY not configured; using public catalog.data.gov CKAN endpoint.")
     if not keyword_query: return []
     
-    params = {"api_key": DATA_GOV_API_KEY, "q": keyword_query, "limit": 3}
-    url = "https://api.data.gov/catalog/v1"
+    url = "https://catalog.data.gov/api/3/action/package_search"
+    params = {"q": keyword_query, "rows": 3}
     try:
         async with httpx.AsyncClient(timeout=20.0) as client:
             r = await client.get(url, params=params)
             r.raise_for_status()
-            return [{"title": item.get("title"), "url": item.get("@id"), "snippet": item.get("description", "")[:250]} for item in r.json().get("results", [])]
+            results = r.json().get("result", {}).get("results", [])
+            out = []
+            for item in results:
+                resources = item.get("resources", []) or []
+                resource_url = resources[0].get("url") if resources else None
+                dataset_page = f"https://catalog.data.gov/dataset/{item.get('name')}"
+                out.append({
+                    "title": item.get("title"),
+                    "url": resource_url or dataset_page,
+                    "snippet": (item.get("notes", "") or "")[:250]
+                })
+            return out
     except httpx.HTTPStatusError as e:
         logger.error(f"Data.gov API HTTP Error: {e.response.status_code} - {e.response.text}")
         return [{"error": f"Data.gov API error: {e.response.status_code}", "source": "DATA.GOV", "status": "failed"}]
@@ -268,8 +281,16 @@ async def execute_query_plan(plan: Dict, claim_type: str) -> List[Dict[str, Any]
     tasks = []
     
     if "BEA" in sources_to_query and tier1_params.get("bea"):
-        bea_params = tier1_params.get("bea")
+        bea_params = tier1_params.get("bea").copy()
         table_name = bea_params.get("TableName")
+        if bea_params.get("LineCode"):
+            lc = bea_params.get("LineCode")
+            digits = re.findall(r"\d+", str(lc))
+            if digits:
+                bea_params["LineCode"] = digits[0]
+            else:
+                logger.warning("BEA LineCode appears non-numeric; removing LineCode to broaden query.")
+                bea_params.pop("LineCode", None)
         if table_name and table_name in BEA_VALID_TABLES:
             tasks.append(query_bea(params=bea_params))
         elif table_name:
@@ -319,7 +340,7 @@ async def summarize_with_evidence(claim: str, sources: List[Dict[str, str]]) -> 
     context = "\n---\n".join([f"Source Title: {s['title']}\nURL: {s['url']}\nSnippet: {s['snippet']}" for s in unique_sources])
     
     prompt = (
-        "You are a meticulous and impartial fact-checker. Your sole responsibility is to analyze the provided evidence from U.S. government data sources and synthesize a definitive conclusion about the claim.\n\n"
+        "You are a meticulous and impartial fact-checker. Your sole responsibility is to analyze the provided evidence from U.S. government data sources and synthesize a definitive conclusion about the claim.\n"
         "YOUR METHODOLOGY (CHAIN-OF-THOUGHT):\n"
         "1. First, review all evidence snippets. Identify the key data points relevant to the claim.\n"
         "2. Second, compare the data points to the user's claim.\n"
@@ -366,7 +387,7 @@ def compute_confidence(sources: List[Dict[str, Any]], summary_text: str) -> Dict
         if "apps.bea.gov" in url_lower: weight = 1.0
         elif "api.census.gov" in url_lower: weight = 0.9
         elif "api.congress.gov" in url_lower: weight = 0.8
-        elif "api.data.gov" in url_lower: weight = 0.7
+        elif "api.data.gov" in url_lower or "catalog.data.gov" in url_lower: weight = 0.7
         else: weight = 0.6
         total_weight += weight
     R = round(total_weight / len(sources), 2)

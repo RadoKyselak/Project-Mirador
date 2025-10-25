@@ -296,7 +296,7 @@ async def summarize_with_evidence(claim: str, sources: List[Dict[str, str]]) -> 
     unique_sources = {s['url']: s for s in valid_sources}.values()
     context = "\n---\n".join([f"Source Title: {s['title']}\nURL: {s['url']}\nSnippet: {s['snippet']}" for s in unique_sources])
     
-   prompt = (
+    prompt = (
         "You are a meticulous and impartial fact-checker. Your sole responsibility is to analyze the provided evidence from U.S. government data sources and synthesize a definitive conclusion about the user's claim. Do not introduce outside information.\n\n"
         "YOUR METHODOLOGY (CHAIN-OF-THOUGHT):\n"
         "1. First, review all evidence snippets. Identify the key data points relevant to the claim.\n"
@@ -424,3 +424,4 @@ async def verify(req: VerifyRequest):
         "debug_plan": api_plan,
         "debug_log": debug_errors
     }
+

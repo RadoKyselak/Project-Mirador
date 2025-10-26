@@ -40,13 +40,6 @@ DATA_GOV_API_KEY = os.getenv("DATA_GOV_API_KEY")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 GEMINI_ENDPOINT = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
 
-try:
-    EMBEDDING_MODEL = SentenceTransformer("all-MiniLM-L6-v2")
-    logger.info("SentenceTransformer model 'all-MiniLM-L6-v2' loaded.")
-except Exception as e:
-    logger.error("Failed to load SentenceTransformer model: %s. Semantic scoring will be disabled.", e)
-    EMBEDDING_MODEL = None
-
 BEA_VALID_TABLES = {
     "T10101", "T20305", "T31600", "T70500"
 }
@@ -132,38 +125,60 @@ async def analyze_claim_for_api_plan(claim: str) -> Dict[str, Any]:
     """Uses LLM to generate an API query plan based on the claim."""
     prompt_template = """
     You are a research analyst expert in U.S. government data APIs (BEA, Census, Data.gov).
-Analyze the user's claim and generate a plan to verify it using these APIs.
-
-Identify:
-1.  `claim_normalized`: A clear, verifiable statement.
-2.  `claim_type`: Classification (e.g., quantitative_comparison, quantitative_value, factual, legislative, other).
-3.  `entities`: Key concepts/metrics mentioned (e.g., ["GDP", "Inflation Rate"], ["Defense Spending", "Education Spending"]).
-4.  `relationship`: The asserted link (e.g., "greater than", "less than", "correlation", "existence", "value is X").
-5.  `api_plan`: JSON with `tier1_params` (for specific BEA/Census calls) and `tier2_keywords` (for Data.gov/Congress search).
-
-AVAILABLE APIs:
-- BEA: NIPA dataset (T31600 for spending by function). Use LineCodes (e.g., 2 for Defense, 14 for Education).
-- Census: Use specific endpoints/params ONLY if confident. Otherwise, use Data.gov keywords.
-- Data.gov (CKAN): Keyword search via catalog.data.gov.
-- Congress.gov: Keyword search for legislative info.
-
-USER CLAIM: '''{claim}'''
-
-Return ONLY a single valid JSON object. Example:
-{{
-  "claim_normalized": "Federal spending on defense exceeded education spending in 2023.",
-  "claim_type": "quantitative_comparison",
-  "entities": ["Federal Defense Spending", "Federal Education Spending"],
-  "relationship": "greater than",
-  "api_plan": {{
-    "tier1_params": {{
-      "bea": {{"DataSetName":"NIPA","TableName":"T31600","Frequency":"A","Year":"2023","LineCode":["2","14"]}},
-      "census": null
-    }},
-    "tier2_keywords": ["federal budget appropriations 2023", "OMB historical tables spending"]
-  }}
-}}
-"""
+    Analyze the user's claim and generate a plan to verify it using these APIs.
+    
+    Identify:
+    1.  `claim_normalized`: A clear, verifiable statement.
+    2.  `claim_type`: Classification (e.g., quantitative_comparison, quantitative_value, factual, legislative, other).
+    3.  `entities`: Key concepts/metrics mentioned (e.g., ["GDP", "Inflation Rate"], ["Defense Spending", "Education Spending"]).
+    4.  `relationship`: The asserted link (e.g., "greater than", "less than", "correlation", "existence", "value is X").
+    5.  `api_plan`: JSON with `tier1_params` (for specific BEA/Census calls) and `tier2_keywords` (for Data.gov/Congress search).
+    
+    AVAILABLE APIs:
+    - BEA: NIPA dataset (T31600 for spending by function). Use LineCodes (e.g., 2 for Defense, 14 for Education).
+    - Census ACS (American Community Survey): Use `census_acs` key. Provide `year`, `dataset` (e.g., "acs/acs1/profile"), `get` (variable codes, e.g., "NAME,DP05_0001E"), and `for` (geography, e.g., "state:01" for Alabama or "state:*" for all).
+    - Data.gov (CKAN): Keyword search via catalog.data.gov.
+    - Congress.gov: Keyword search for legislative info.
+    
+    USER CLAIM: '''{claim}'''
+    
+    Return ONLY a single valid JSON object.
+    
+    Example for a claim about defense spending:
+    {{
+      "claim_normalized": "Federal spending on defense exceeded education spending in 2023.",
+      "claim_type": "quantitative_comparison",
+      "entities": ["Federal Defense Spending", "Federal Education Spending"],
+      "relationship": "greater than",
+      "api_plan": {{
+        "tier1_params": {{
+          "bea": {{"DataSetName":"NIPA","TableName":"T31600","Frequency":"A","Year":"2023","LineCode":["2","14"]}},
+          "census_acs": null
+        }},
+        "tier2_keywords": ["federal budget appropriations 2023 defense education", "OMB historical tables spending"]
+      }}
+    }}
+    
+    Example for a claim about population:
+    {{
+      "claim_normalized": "The total population of Alabama in 2022 was over 5 million.",
+      "claim_type": "quantitative_value",
+      "entities": ["Alabama Population", "2022"],
+      "relationship": "value is X",
+      "api_plan": {{
+        "tier1_params": {{
+          "bea": null,
+          "census_acs": {{
+            "year": "2022",
+            "dataset": "acs/acs1/profile",
+            "get": "NAME,DP05_0001E",
+            "for": "state:01"
+          }}
+        }},
+        "tier2_keywords": ["alabama population 2022"]
+      }}
+    }}
+    """
     prompt = prompt_template.format(claim=claim)
     fallback_plan = {"claim_normalized": claim, "claim_type": "Other", "entities": [], "relationship": "unknown",
                      "api_plan": {"tier1_params": {}, "tier2_keywords": [claim]}}
@@ -536,6 +551,7 @@ async def verify(req: VerifyRequest):
             "debug_plan": analysis.get("api_plan", {}), 
             "debug_log": [{"error": f"Unhandled exception: {str(e)}", "source": "internal", "status": "failed"}],
         }
+
 
 
 

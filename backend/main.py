@@ -27,7 +27,10 @@ def check_api_keys_on_startup():
     else:
         logger.info("All critical API keys seem present.")
 
-app = FastAPI(on_startup=[check_api_keys_on_startup])
+app = FastAPI()
+@app.on_event("startup")
+async def startup_event():
+    check_api_keys_on_startup()
 
 app.add_middleware(
     CORSMiddleware,
@@ -655,11 +658,26 @@ async def verify(req: VerifyRequest):
     except Exception as e:
         logger.exception("Unhandled error during /verify processing for claim: %s", claim)
         return {
-            "claim_original": claim,"claim_normalized": claim,"claim_type": "Other",
-            "verdict": "Error", "confidence": 0.0, "confidence_tier": "Low",
-            "confidence_breakdown": {"R": 0.0, "E": 0.0, "S": 0.0},
+            "claim_original": claim,
+            "claim_normalized": claim,
+            "claim_type": "Other",
+            "verdict": "Error",
+            "confidence": 0.0,
+            "confidence_tier": "Low",
+            "confidence_breakdown": {
+                "R": 0.0,
+                "E": 0.0,
+                "S": 0.0,
+            },
             "summary": "An unexpected internal error occurred.",
-            "evidence_links": [], "sources": [],
-            "debug_plan": analysis.get("api_plan", {}), 
-            "debug_log": [{"error": f"Unhandled exception: {str(e)}", "source": "internal", "status": "failed"}],
+            "evidence_links": [],
+            "sources": [],
+            "debug_plan": analysis.get("api_plan", {}),
+            "debug_log": [
+                {
+                    "error": f"Unhandled exception: {str(e)}",
+                    "source": "internal",
+                    "status": "failed",
+                }
+            ],
         }

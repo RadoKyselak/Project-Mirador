@@ -8,13 +8,16 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import httpx
+from sentence_transformers import SentenceTransformer, util
+import numpy as np
+import torch
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+logger = logging.getLogger(__name__)
 
 REQUIRED_KEYS = [
     "GEMINI_API_KEY", "BEA_API_KEY", "CENSUS_API_KEY", "CONGRESS_API_KEY"
 ]
-
-logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.INFO)
 
 def check_api_keys_on_startup():
     logger.info("Startup: checking for required API keys...")
@@ -43,13 +46,20 @@ DATA_GOV_API_KEY = os.getenv("DATA_GOV_API_KEY")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 GEMINI_ENDPOINT = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
 
+try:
+    EMBEDDING_MODEL = SentenceTransformer("all-MiniLM-L6-v2")
+    logger.info("SentenceTransformer model 'all-MiniLM-L6-v2' loaded.")
+except Exception as e:
+    logger.error("Failed to load SentenceTransformer model: %s. Semantic scoring will be disabled.", e)
+    EMBEDDING_MODEL = None
+
 BEA_VALID_TABLES = {
     "T10101", "T20305", "T31600", "T70500"
 }
 
 @app.get("/")
 async def health_check():
-    return {"status": "ok", "message": "Stelthar-API is running."}
+    return {"status": "ok", "message": "Stelthar-API is running :)"}
 
 class VerifyRequest(BaseModel):
     claim: str
@@ -129,24 +139,24 @@ async def analyze_claim_for_api_plan(claim: str) -> Dict[str, Any]:
     prompt_template = """
     You are a research analyst expert in U.S. government data APIs (BEA, Census, Data.gov).
     Analyze the user's claim and generate a plan to verify it using these APIs.
-    
+
     Identify:
     1.  `claim_normalized`: A clear, verifiable statement.
     2.  `claim_type`: Classification (e.g., quantitative_comparison, quantitative_value, factual, legislative, other).
     3.  `entities`: Key concepts/metrics mentioned (e.g., ["GDP", "Inflation Rate"], ["Defense Spending", "Education Spending"]).
     4.  `relationship`: The asserted link (e.g., "greater than", "less than", "correlation", "existence", "value is X").
     5.  `api_plan`: JSON with `tier1_params` (for specific BEA/Census calls) and `tier2_keywords` (for Data.gov/Congress search).
-    
+
     AVAILABLE APIs:
     - BEA: NIPA dataset (T31600 for spending by function). Use LineCodes (e.g., 2 for Defense, 14 for Education).
     - Census ACS (American Community Survey): Use `census_acs` key. Provide `year`, `dataset` (e.g., "acs/acs1/profile"), `get` (variable codes, e.g., "NAME,DP05_0001E"), and `for` (geography, e.g., "state:01" for Alabama or "state:*" for all).
     - Data.gov (CKAN): Keyword search via catalog.data.gov.
     - Congress.gov: Keyword search for legislative info.
-    
+
     USER CLAIM: '''{claim}'''
-    
+
     Return ONLY a single valid JSON object.
-    
+
     Example for a claim about defense spending:
     {{
       "claim_normalized": "Federal spending on defense exceeded education spending in 2023.",
@@ -161,7 +171,7 @@ async def analyze_claim_for_api_plan(claim: str) -> Dict[str, Any]:
         "tier2_keywords": ["federal budget appropriations 2023 defense education", "OMB historical tables spending"]
       }}
     }}
-    
+
     Example for a claim about population:
     {{
       "claim_normalized": "The total population of Alabama in 2022 was over 5 million.",
@@ -183,8 +193,22 @@ async def analyze_claim_for_api_plan(claim: str) -> Dict[str, Any]:
     }}
     """
     prompt = prompt_template.format(claim=claim)
-    fallback_plan = {"claim_normalized": claim, "claim_type": "Other", "entities": [], "relationship": "unknown",
-                     "api_plan": {"tier1_params": {}, "tier2_keywords": [claim]}}
+
+    fallback_keywords = [claim.strip()]
+    if len(claim.strip().split()) < 4:
+        fallback_keywords.append("general government statistics")
+    
+    fallback_plan = {
+        "claim_normalized": claim,
+        "claim_type": "Other",
+        "entities": [],
+        "relationship": "unknown",
+        "api_plan": {
+            "tier1_params": {},
+            "tier2_keywords": fallback_keywords
+        }
+    }
+
     try:
         res = await call_gemini(prompt)
         parsed = extract_json_block(res.get("text", ""))
@@ -265,28 +289,74 @@ async def query_bea(params: Dict[str, Any]) -> List[Dict[str, Any]]:
         })
     return out
 
+async def query_census_acs(params: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """
+    Queries the Census ACS API (e.g., /data/2022/acs/acs1/profile).
+    Params expected: {"year": "YYYY", "dataset": "path", "get": "VARS", "for": "GEO"}
+    """
+    if not CENSUS_API_KEY:
+        return [{"error": "CENSUS_API_KEY missing", "source": "CENSUS", "status": "failed"}]
+    if not all(k in params for k in ["year", "dataset", "get", "for"]):
+        logger.warning("Census ACS query missing required params: %s", params)
+        return []
 
-async def query_census(params: Dict[str, Any]) -> List[Dict[str, Any]]:
-    if not CENSUS_API_KEY: return [{"error": "CENSUS_API_KEY missing", "source": "CENSUS", "status": "failed"}]
-    if not params: return []
-    final_params = {"key": CENSUS_API_KEY}
-    endpoint = params.get("endpoint")
-    if not endpoint: return [{"error": "Census endpoint missing", "source": "CENSUS", "status": "failed"}]
-    url = f"https://api.census.gov{endpoint}"
-    final_params.update(params.get("params", {}))
+    year = params["year"]
+    dataset = params["dataset"].strip("/")
+    
+    url = f"https://api.census.gov/data/{year}/{dataset}"
+    final_params = {
+        "key": CENSUS_API_KEY,
+        "get": params["get"],
+        "for": params["for"]
+    }
+    
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
             r = await client.get(url, params=final_params)
             r.raise_for_status()
-            try: snippet = str(r.json()[:5])[:1000]
-            except Exception: snippet = str(r.text)[:1000]
-            return [{"title": f"Census: {endpoint}", "url": str(r.url), "snippet": snippet}]
+            data = r.json()
+
+            if not data or len(data) < 2:
+                logger.info("Census query returned no data.")
+                return []
+
+            headers = data[0]
+            rows = data[1:]
+            results = []
+
+            for row in rows:
+                row_data = dict(zip(headers, row))
+                
+                snippet_parts = []
+                for k, v in row_data.items():
+                    if k.upper() not in ["KEY", "FOR", "IN", "STATE", "COUNTY"]:
+                         snippet_parts.append(f"{k}: {v}")
+                
+                snippet = f"Data for {row_data.get('NAME', params['for'])}: " + ", ".join(snippet_parts)
+                
+                primary_var = params["get"].split(",")[1] if "," in params["get"] else None
+                data_value_raw = row_data.get(primary_var)
+                numeric_val = _parse_numeric_value(data_value_raw)
+
+                results.append({
+                    "title": f"Census ACS: {params['get']} for {row_data.get('NAME', params['for'])}",
+                    "url": str(r.url),
+                    "snippet": snippet,
+                    "data_value": numeric_val,
+                    "raw_data_value": data_value_raw,
+                    "raw_census_row": row_data
+                })
+            return results
+
     except httpx.HTTPStatusError as e:
         logger.error("Census HTTP error %s: %s", e.response.status_code, e.response.text)
         return [{"error": f"Census API error: {e.response.status_code}", "source": "CENSUS", "status": "failed"}]
     except httpx.RequestError as e:
         logger.error("Census request error: %s", str(e))
         return [{"error": str(e), "source": "CENSUS", "status": "failed"}]
+    except json.JSONDecodeError:
+        logger.error("Census returned non-JSON response: %s", r.text[:200])
+        return [{"error": "Census API returned invalid JSON", "source": "CENSUS", "status": "failed"}]
 
 
 async def query_congress(keyword_query: str) -> List[Dict[str, Any]]:
@@ -374,7 +444,7 @@ async def execute_query_plan(plan: Dict[str, Any], claim_type: str) -> List[Dict
         else: logger.warning("BEA table invalid/missing: %s", table)
 
     if "CENSUS" in sources and tier1.get("census_acs"):
-        tasks.append(query_census(params=tier1["census_acs"]))
+        tasks.append(query_census_acs(params=tier1["census_acs"]))
 
     for kw in tier2_kws:
         if "DATA.GOV" in sources: tasks.append(query_datagov(kw))
@@ -402,11 +472,15 @@ async def synthesize_finding_with_llm(
     context_parts = []
     for s in valid_sources:
         part = f"Source Title: {s.get('title', 'N/A')}\nURL: {s.get('url', 'N/A')}\n"
-        # If it's a BEA source with data, add structured info
+        
         if "apps.bea.gov" in s.get("url", "") and s.get("data_value") is not None:
-             part += (f"Data Point: {s.get('line_description')} ({s.get('line_code')}) "
-                      f"= {s.get('raw_data_value')} {s.get('unit') or ''} "
-                      f"(Multiplier: {s.get('unit_multiplier')})\n")
+            part += (f"Data Point: {s.get('line_description')} ({s.get('line_code')}) "
+                     f"= {s.get('raw_data_value')} {s.get('unit') or ''} "
+                     f"(Multiplier: {s.get('unit_multiplier')})\n")
+        elif "api.census.gov" in s.get("url", "") and s.get("data_value") is not None:
+             part += (f"Data Point: {s.get('title', 'Census Data')} "
+                      f"= {s.get('raw_data_value')}\n")
+            
         part += f"Snippet: {s.get('snippet', 'N/A')}"
         context_parts.append(part)
 
@@ -427,15 +501,17 @@ AVAILABLE EVIDENCE:
 
 INSTRUCTIONS:
 1.  Carefully review the user's claim and its asserted relationship between entities.
-2.  Examine ALL evidence provided. Look for data points directly relevant to the claim's entities and timeframe (if specified). Pay attention to structured data values from BEA. Apply multipliers if needed.
-3.  Compare the relevant findings from the evidence to the claim's assertion.
-4.  Determine the final `verdict`:
+2.  Examine ALL evidence provided. Look for data points (like from BEA or Census) directly relevant to the claim's entities and timeframe.
+3.  For BEA data, apply the 'Multiplier' (e.g., a 'DataValue' of 1000 and 'UnitMultiplier' of 1000000 means 100,000,000,000).
+4.  For Census data, use the provided 'Data Point' values.
+5.  Compare the relevant findings from the evidence to the claim's assertion.
+6.  Determine the final `verdict`:
     - "Supported": If the evidence *clearly and directly* supports the claim's assertion.
     - "Contradicted": If the evidence *clearly and directly* contradicts the claim's assertion.
     - "Inconclusive": If the evidence is missing, insufficient, ambiguous, or irrelevant to make a clear judgment.
-5.  Write a concise `summary` (1 sentence) stating the final conclusion based on the evidence. Start with "The available data suggests...", "The data supports...", "The data contradicts...", or "The data is insufficient...".
-6.  Write a brief `justification` (1-2 sentences) explaining *why* you reached that verdict, citing specific data points or lack thereof from the evidence.
-7.  Create `evidence_links` (list of {{"finding": "...", "source_url": "..."}}) linking key pieces of data used in your justification back to their source URLs from the evidence context.
+7.  Write a concise `summary` (1 sentence) stating the final conclusion based on the evidence.
+8.  Write a brief `justification` (1-2 sentences) explaining *why* you reached that verdict, citing specific data points.
+9.  Create `evidence_links` (list of {{"finding": "...", "source_url": "..."}}) linking key data to their source URLs.
 
 Return ONLY a single valid JSON object with keys: "verdict", "summary", "justification", "evidence_links".
 Example Response:
@@ -469,16 +545,21 @@ Example Response:
         default_response["justification"] += " (Unexpected analysis error.)"
         return default_response
 
-def compute_confidence(sources: List[Dict[str, Any]], verdict: str) -> Dict[str, Any]:
-    """Calculates confidence score based on source reliability, density, and LLM verdict."""
+def compute_confidence(sources: List[Dict[str, Any]], verdict: str, claim: str) -> Dict[str, Any]:
+    """
+    Calculates confidence score based on source reliability (R), 
+    evidence density (E), and semantic alignment (S).
+    """
     valid_sources = [s for s in sources if s and "error" not in s]
+    
     if not valid_sources:
-        return {"confidence": 0.3, "R": 0.5, "E": 0.0, "S": 0.3}
+        return {"confidence": 0.3, "R": 0.5, "E": 0.0, "S": 0.3} 
+        
     total_weight = 0.0
     for s in valid_sources:
         url = (s.get("url") or "").lower()
         if "apps.bea.gov" in url: weight = 1.0
-        elif "api.census.gov" in url: weight = 0.9
+        elif "api.census.gov" in url: weight = 1.0 
         elif "api.congress.gov" in url: weight = 0.8
         elif "catalog.data.gov" in url: weight = 0.7
         else: weight = 0.6
@@ -487,12 +568,39 @@ def compute_confidence(sources: List[Dict[str, Any]], verdict: str) -> Dict[str,
 
     E = round(min(1.0, len(valid_sources) / 5.0), 2)
 
-    if verdict == "Supported": S = 0.95
-    elif verdict == "Contradicted": S = 0.90
-    else: S = 0.5
+    S_llm_verdict = 0.5 
+    if verdict == "Supported": S_llm_verdict = 0.95
+    elif verdict == "Contradicted": S_llm_verdict = 0.90
+    
+    S_semantic_sim = 0.0
+    if EMBEDDING_MODEL and claim and valid_sources:
+        try:
+            evidence_texts = []
+            for s in valid_sources:
+                evidence_texts.append(s.get('snippet', ''))
+                evidence_texts.append(s.get('title', ''))
+                if s.get('data_value') is not None:
+                    evidence_texts.append(f"{s.get('line_description', '')} is {s.get('raw_data_value')}")
 
-    confidence = round((0.4 * R + 0.3 * E + 0.3 * S), 2)
-    return {"confidence": confidence, "R": R, "E": E, "S": S}
+            evidence_texts = [t for t in evidence_texts if t and isinstance(t, str)]
+
+            if evidence_texts:
+                claim_embedding = EMBEDDING_MODEL.encode(claim, convert_to_tensor=True)
+                evidence_embeddings = EMBEDDING_MODEL.encode(evidence_texts, convert_to_tensor=True)
+                
+                similarities = util.pytorch_cos_sim(claim_embedding, evidence_embeddings)
+                
+                S_semantic_sim = round(float(torch.max(similarities)), 2)
+
+        except Exception as e:
+            logger.error("Error during semantic similarity calculation: %s", e)
+            S_semantic_sim = 0.3 
+    
+    S = round((S_llm_verdict * 0.7) + (S_semantic_sim * 0.3), 2)
+
+    confidence = round((0.5 * R + 0.2 * E + 0.3 * S), 2)
+    
+    return {"confidence": confidence, "R": R, "E": E, "S": S, "S_semantic_sim": S_semantic_sim}
 
 @app.post("/verify")
 async def verify(req: VerifyRequest):
@@ -517,7 +625,8 @@ async def verify(req: VerifyRequest):
         verdict = synthesis_result.get("verdict", "Inconclusive")
         summary_text = f"{synthesis_result.get('summary','')} {synthesis_result.get('justification','')}".strip()
 
-        confidence_data = compute_confidence(sources_results, verdict)
+        confidence_data = compute_confidence(sources_results, verdict, claim_norm)
+        
         confidence_val = confidence_data["confidence"]
 
         if confidence_val > 0.75: confidence_tier = "High"
@@ -554,11 +663,3 @@ async def verify(req: VerifyRequest):
             "debug_plan": analysis.get("api_plan", {}), 
             "debug_log": [{"error": f"Unhandled exception: {str(e)}", "source": "internal", "status": "failed"}],
         }
-
-
-
-
-
-
-
-

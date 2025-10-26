@@ -36,7 +36,7 @@ app.add_middleware(
 )
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-DATA_GOV_API_KEY = os.getenv("DATA_GOV_API_KEY")  # not required for catalog.data.gov
+DATA_GOV_API_KEY = os.getenv("DATA_GOV_API_KEY")
 BEA_API_KEY = os.getenv("BEA_API_KEY")
 CENSUS_API_KEY = os.getenv("CENSUS_API_KEY")
 CONGRESS_API_KEY = os.getenv("CONGRESS_API_KEY")
@@ -58,9 +58,6 @@ async def health_check():
 class VerifyRequest(BaseModel):
     claim: str
 
-# -------------------------
-# Helpers
-# -------------------------
 def extract_json_block(text: str) -> Optional[Dict[str, Any]]:
     """Extract first balanced JSON object from text. Returns None if not found/parseable."""
     if not text:
@@ -80,7 +77,6 @@ def extract_json_block(text: str) -> Optional[Dict[str, Any]]:
                 try:
                     return json.loads(candidate)
                 except json.JSONDecodeError:
-                    # Try removing control chars and retry
                     try:
                         cleaned = re.sub(r"[\x00-\x1f]", "", candidate)
                         return json.loads(cleaned)
@@ -93,12 +89,9 @@ def _parse_numeric_value(val: Any) -> Optional[float]:
         return None
     try:
         s = str(val).strip()
-        # remove commas and dollar signs
         s = s.replace(",", "").replace("$", "")
-        # parentheses as negative
         if s.startswith("(") and s.endswith(")"):
             s = "-" + s[1:-1]
-        # parse leading numeric token
         m = re.match(r"^(-?[\d\.eE+-]+)", s)
         if m:
             return float(m.group(1))
@@ -112,15 +105,10 @@ def _apply_multiplier(value: Optional[float], multiplier: Optional[Any]) -> Opti
     if multiplier is None:
         return value
     try:
-        # multiplier may be string "1", "1000", etc.
         return float(value) * float(multiplier)
     except Exception:
-        # if multiplier unparsable, return original
         return value
 
-# -------------------------
-# LLM call
-# -------------------------
 async def call_gemini(prompt: str) -> Dict[str, Any]:
     """
     Call Gemini. This function raises HTTPException on obvious misconfiguration or HTTP failure.
@@ -142,7 +130,6 @@ async def call_gemini(prompt: str) -> Dict[str, Any]:
         except httpx.RequestError as e:
             logger.error("Gemini request error: %s", str(e))
             raise HTTPException(status_code=500, detail=f"Error communicating with Gemini: {str(e)}")
-    # try to extract text in various shapes
     text = ""
     if isinstance(data, dict):
         cand_list = data.get("candidates") or []
@@ -155,34 +142,31 @@ async def call_gemini(prompt: str) -> Dict[str, Any]:
         text = json.dumps(data)
     return {"raw": data, "text": text}
 
-# -------------------------
-# Plan generation
-# -------------------------
 async def analyze_claim_for_api_plan(claim: str) -> Dict[str, Any]:
-    # Use a triple-quoted f-string so embedded JSON examples don't break Python quoting.
-    prompt = f"""
-You are a world-class research analyst and a U.S. government data expert. Deconstruct the user's factual claim into a precise API plan.
-
-AVAILABLE APIs & DATASETS:
-- BEA: dataset 'NIPA', tables like 'T31600' (Government Spending by Function).
-- Census: various endpoints (use only when you can produce endpoint+params).
-- Data.gov: for keyword searches.
-
-USER CLAIM: '''{claim}'''
-
-Return a single JSON object like:
-{{ 
-  "claim_normalized": "...", 
-  "claim_type": "quantitative", 
-  "api_plan": {{ 
-    "tier1_params": {{ 
-      "bea": { {{"DataSetName":"NIPA","TableName":"T31600","Frequency":"A","Year":"2023","LineCode":["2","14"]}} }, 
-      "census": null 
-    }}, 
-    "tier2_keywords": ["...","..."] 
-  }} 
-}}
-"""
+    prompt_template = """
+    You are a world-class research analyst and a U.S. government data expert. Deconstruct the user's factual claim into a precise API plan.
+    
+    AVAILABLE APIs & DATASETS:
+    - BEA: dataset 'NIPA', tables like 'T31600' (Government Spending by Function).
+    - Census: various endpoints (use only when you can produce endpoint+params).
+    - Data.gov: for keyword searches.
+    
+    USER CLAIM: '''{claim}'''
+    
+    Return a single JSON object like:
+    {{
+      "claim_normalized": "...",
+      "claim_type": "quantitative",
+      "api_plan": {{
+        "tier1_params": {{
+          "bea": {{"DataSetName":"NIPA","TableName":"T31600","Frequency":"A","Year":"2023","LineCode":["2","14"]}},
+          "census": null
+        }},
+        "tier2_keywords": ["...","..."]
+      }}
+    }}
+    """
+    prompt = prompt_template.format(claim=claim)
     try:
         res = await call_gemini(prompt)
         parsed = extract_json_block(res.get("text", ""))
@@ -329,10 +313,17 @@ async def query_congress(keyword_query: str = None) -> List[Dict[str, Any]]:
             r = await client.get(url, params=params)
             r.raise_for_status()
             bills = r.json().get("bills", [])
-            return [
-                {"title": bill.get("title"), "url": bill.get("url"), "snippet": f"Latest Action: {bill.get('latestAction', {}).get('text')}"}
-                for bill in bills
-            ]
+            results = []
+            for bill in bills:
+                url_obj = bill.get("url")
+                url_str = url_obj.get("url") if isinstance(url_obj, dict) else str(url_obj)
+                
+                results.append({
+                    "title": bill.get("title"),
+                    "url": url_str,
+                    "snippet": f"Latest Action: {bill.get('latestAction', {}).get('text')}"
+                })
+            return results
     except httpx.HTTPStatusError as e:
         logger.error("Congress HTTP error %s: %s", e.response.status_code, e.response.text)
         return [{"error": f"Congress API error: {e.response.status_code}", "source": "CONGRESS", "status": "failed"}]
@@ -343,7 +334,6 @@ async def query_congress(keyword_query: str = None) -> List[Dict[str, Any]]:
 async def query_datagov(keyword_query: str) -> List[Dict[str, str]]:
     if not keyword_query:
         return []
-    # Use catalog.data.gov CKAN endpoint (no API key required for search)
     url = "https://catalog.data.gov/api/3/action/package_search"
     params = {"q": keyword_query, "rows": 5}
     try:
@@ -354,7 +344,12 @@ async def query_datagov(keyword_query: str) -> List[Dict[str, str]]:
             out = []
             for item in results:
                 resources = item.get("resources") or []
-                resource_url = resources[0].get("url") if resources else None
+                url_obj = resources[0].get("url") if resources else None
+                resource_url = None
+                if isinstance(url_obj, dict):
+                    resource_url = url_obj.get("url") 
+                elif url_obj:
+                    resource_url = str(url_obj)
                 dataset_page = f"https://catalog.data.gov/dataset/{item.get('name')}" if item.get("name") else None
                 out.append({"title": item.get("title"), "url": resource_url or dataset_page, "snippet": (item.get("notes") or "")[:250]})
             return out
@@ -365,16 +360,12 @@ async def query_datagov(keyword_query: str) -> List[Dict[str, str]]:
         logger.error("Data.gov request error: %s", str(e))
         return [{"error": str(e), "source": "DATA.GOV", "status": "failed"}]
 
-# -------------------------
-# Plan execution
-# -------------------------
 async def execute_query_plan(plan: Dict[str, Any], claim_type: str) -> List[Dict[str, Any]]:
     tier1_params = plan.get("tier1_params", {}) or {}
     tier2_keywords = plan.get("tier2_keywords", []) or []
     sources_to_query = pick_sources_from_type(claim_type)
     tasks = []
 
-    # BEA tier1: support list of LineCodes or single value
     if "BEA" in sources_to_query and tier1_params.get("bea"):
         bea_base = tier1_params.get("bea").copy()
         table_name = bea_base.get("TableName")
@@ -400,11 +391,9 @@ async def execute_query_plan(plan: Dict[str, Any], claim_type: str) -> List[Dict
                         bea_base.pop("LineCode", None)
                 tasks.append(query_bea(params=bea_base))
 
-    # Census only for structured tier1 params
     if "CENSUS" in sources_to_query and tier1_params.get("census"):
         tasks.append(query_census(params=tier1_params.get("census")))
 
-    # Tier2 keywords: Data.gov and Congress (avoid free-text ACS calls)
     for kw in tier2_keywords:
         if "DATA.GOV" in sources_to_query:
             tasks.append(query_datagov(kw))
@@ -415,7 +404,6 @@ async def execute_query_plan(plan: Dict[str, Any], claim_type: str) -> List[Dict
         logger.info("No tasks to execute for plan.")
         return []
 
-    # gather results concurrently; individual tasks return lists (including error dicts)
     results = await asyncio.gather(*tasks)
     flattened: List[Dict[str, Any]] = []
     for sub in results:
@@ -424,9 +412,6 @@ async def execute_query_plan(plan: Dict[str, Any], claim_type: str) -> List[Dict
                 flattened.append(it)
     return flattened
 
-# -------------------------
-# Summarization & deterministic compare
-# -------------------------
 async def summarize_with_evidence(claim: str, sources: List[Dict[str, Any]]) -> Dict[str, Any]:
     default_summary = {
         "summary": "The available data is insufficient to verify the claim.",
@@ -441,7 +426,6 @@ async def summarize_with_evidence(claim: str, sources: List[Dict[str, Any]]) -> 
     if not valid_sources:
         return default_summary
 
-    # Try to detect BEA numeric rows and perform deterministic comparison
     def is_defense_row(s: Dict[str, Any]) -> bool:
         txt = " ".join(filter(None, [str(s.get("line_description", "")).lower(), (s.get("title") or "").lower(), (s.get("snippet") or "").lower()]))
         return any(k in txt for k in ["defense", "national defense", "military", "national security"])
@@ -453,7 +437,6 @@ async def summarize_with_evidence(claim: str, sources: List[Dict[str, Any]]) -> 
     bea_rows = [s for s in valid_sources if s.get("data_value") is not None]
     logger.debug("Found %d BEA numeric rows: %s", len(bea_rows), [(r.get("line_code"), r.get("line_description"), r.get("data_value")) for r in bea_rows])
 
-    # Prefer matching by BEA line_code if present
     def match_by_linecodes(codes):
         codes_set = {str(c).strip() for c in codes}
         for r in bea_rows:
@@ -461,11 +444,9 @@ async def summarize_with_evidence(claim: str, sources: List[Dict[str, Any]]) -> 
                 return r
         return None
 
-    # Known common codes for T31600 (adjust if BEA uses different codes)
     defense_row = match_by_linecodes(["2", "02"])
     education_row = match_by_linecodes(["14", "014"])
 
-    # If not matched by code, try description matching
     if not defense_row:
         for r in bea_rows:
             if is_defense_row(r):
@@ -480,7 +461,6 @@ async def summarize_with_evidence(claim: str, sources: List[Dict[str, Any]]) -> 
     logger.debug("Selected defense_row: %s", (defense_row or {}).get("line_description"))
     logger.debug("Selected education_row: %s", (education_row or {}).get("line_description"))
 
-    # If both numeric rows available, do deterministic comparison with multiplier handling
     if defense_row and education_row and defense_row.get("data_value") is not None and education_row.get("data_value") is not None:
         try:
             dv_raw = defense_row["data_value"]
@@ -506,7 +486,6 @@ async def summarize_with_evidence(claim: str, sources: List[Dict[str, Any]]) -> 
                 summary = "The BEA data indicates federal spending on national defense and education were approximately equal in 2023."
                 verdict = "Inconclusive"
             justification = f"BEA values: defense = {dv} {unit_def or ''}, education = {ev} {unit_edu or ''}."
-            # ensure evidence links point to the specific BEA request URLs (these were created per-LineCode)
             evidence_links = [
                 {"finding": f"Defense: {defense_row.get('line_description') or defense_row.get('title')}", "source_url": defense_row.get("url")},
                 {"finding": f"Education: {education_row.get('line_description') or education_row.get('title')}", "source_url": education_row.get("url")},
@@ -515,12 +494,10 @@ async def summarize_with_evidence(claim: str, sources: List[Dict[str, Any]]) -> 
         except Exception:
             logger.exception("Numeric comparison failed; falling back to LLM summarization.")
 
-    # Otherwise, prepare filtered evidence and call Gemini for a narrative summary.
     relevance_kws = ["defense", "national defense", "military", "education", "education and training", "omb", "expenditure", "spending", "appropriations"]
     filtered = []
     for s in valid_sources:
         txt = " ".join(filter(None, [s.get("title", ""), s.get("snippet", "")])).lower()
-        # keep likely relevant items or BEA rows
         if any(k in txt for k in relevance_kws) or (s.get("url") or "").lower().startswith("https://apps.bea.gov"):
             filtered.append(s)
     if not filtered:
@@ -559,9 +536,6 @@ AGGREGATED EVIDENCE:
         return default_summary
     return parsed
 
-# -------------------------
-# Confidence scoring
-# -------------------------
 def compute_confidence(sources: List[Dict[str, Any]], summary_text: str) -> Dict[str, Any]:
     if not sources:
         R, E, S = 0.5, 0.0, 0.3
@@ -595,9 +569,6 @@ def compute_confidence(sources: List[Dict[str, Any]], summary_text: str) -> Dict
     confidence = round((0.4 * R + 0.3 * E + 0.3 * S), 2)
     return {"confidence": confidence, "R": R, "E": E, "S": S}
 
-# -------------------------
-# Main endpoint
-# -------------------------
 @app.post("/verify")
 async def verify(req: VerifyRequest):
     claim = (req.claim or "").strip()
@@ -614,7 +585,6 @@ async def verify(req: VerifyRequest):
         sources_results = [r for r in all_results if "error" not in r]
         debug_errors = [r for r in all_results if "error" in r]
 
-        # Filter relevant sources for summarization (reduce noise)
         relevant = []
         for s in sources_results:
             url = (s.get("url") or "").lower()
@@ -669,7 +639,6 @@ async def verify(req: VerifyRequest):
             "debug_log": debug_errors,
         }
     except Exception as e:
-        # Catch unexpected errors and return a safe JSON response (avoid 500s leaking stack traces)
         logger.exception("Unhandled error in /verify")
         return {
             "claim_original": claim,
@@ -685,3 +654,4 @@ async def verify(req: VerifyRequest):
             "debug_plan": {},
             "debug_log": [{"error": str(e), "source": "internal", "status": "failed"}],
         }
+

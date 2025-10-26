@@ -8,9 +8,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import httpx
-from sentence_transformers import SentenceTransformer, util
-import numpy as np
-import torch
+from math import sqrt
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -48,13 +46,8 @@ DATA_GOV_API_KEY = os.getenv("DATA_GOV_API_KEY")
 
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 GEMINI_ENDPOINT = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
-
-try:
-    EMBEDDING_MODEL = SentenceTransformer("all-MiniLM-L6-v2")
-    logger.info("SentenceTransformer model 'all-MiniLM-L6-v2' loaded.")
-except Exception as e:
-    logger.error("Failed to load SentenceTransformer model: %s. Semantic scoring will be disabled.", e)
-    EMBEDDING_MODEL = None
+EMBEDDING_MODEL_NAME = "text-embedding-004"
+GEMINI_EMBED_ENDPOINT = f"https://generativelanguage.googleapis.com/v1beta/models/{EMBEDDING_MODEL_NAME}:embedContent"
 
 BEA_VALID_TABLES = {
     "T10101", "T20305", "T31600", "T70500"
@@ -136,6 +129,44 @@ async def call_gemini(prompt: str) -> Dict[str, Any]:
         if not text:
             text = data.get("output", "") or data.get("text", "")
     return {"raw": data, "text": text or json.dumps(data)}
+
+async def get_embedding_api(text: str) -> Optional[List[float]]:
+    """Calls the Google AI API to get text embeddings."""
+    if not GEMINI_API_KEY:
+        logger.warning("GEMINI_API_KEY not configured. Cannot get embeddings.")
+        return None
+    
+    headers = {"Content-Type": "application/json", "x-goog-api-key": GEMINI_API_KEY}
+    body = {"model": f"models/{EMBEDDING_MODEL_NAME}", "content": {"parts": [{"text": text}]}}
+    
+    try:
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            r = await client.post(GEMINI_EMBED_ENDPOINT, headers=headers, json=body)
+            r.raise_for_status()
+            data = r.json()
+            embedding = data.get("embedding", {}).get("values", [])
+            return embedding if embedding else None
+    except httpx.HTTPStatusError as e:
+        logger.error("Gemini Embed API HTTP error %s: %s", e.response.status_code, e.response.text)
+        return None
+    except Exception as e:
+        logger.error("Error calling Gemini Embed API: %s", str(e))
+        return None
+
+def cosine_similarity(vec1: List[float], vec2: List[float]) -> float:
+    """Calculates cosine similarity for two vectors."""
+    if not vec1 or not vec2 or len(vec1) != len(vec2):
+        return 0.0
+    
+    dot_product = sum(v1 * v2 for v1, v2 in zip(vec1, vec2))
+    
+    mag_vec1 = sqrt(sum(v**2 for v in vec1))
+    mag_vec2 = sqrt(sum(v**2 for v in vec2))
+    
+    if mag_vec1 == 0 or mag_vec2 == 0:
+        return 0.0
+        
+    return dot_product / (mag_vec1 * mag_vec2)
 
 async def analyze_claim_for_api_plan(claim: str) -> Dict[str, Any]:
     """Uses LLM to generate an API query plan based on the claim."""
@@ -333,7 +364,7 @@ async def query_census_acs(params: Dict[str, Any]) -> List[Dict[str, Any]]:
                 snippet_parts = []
                 for k, v in row_data.items():
                     if k.upper() not in ["KEY", "FOR", "IN", "STATE", "COUNTY"]:
-                         snippet_parts.append(f"{k}: {v}")
+                        snippet_parts.append(f"{k}: {v}")
                 
                 snippet = f"Data for {row_data.get('NAME', params['for'])}: " + ", ".join(snippet_parts)
                 
@@ -548,10 +579,10 @@ Example Response:
         default_response["justification"] += " (Unexpected analysis error.)"
         return default_response
 
-def compute_confidence(sources: List[Dict[str, Any]], verdict: str, claim: str) -> Dict[str, Any]:
+async def compute_confidence(sources: List[Dict[str, Any]], verdict: str, claim: str) -> Dict[str, Any]:
     """
     Calculates confidence score based on source reliability (R), 
-    evidence density (E), and semantic alignment (S).
+    evidence density (E), and semantic alignment (S) using API embeddings.
     """
     valid_sources = [s for s in sources if s and "error" not in s]
     
@@ -576,28 +607,34 @@ def compute_confidence(sources: List[Dict[str, Any]], verdict: str, claim: str) 
     elif verdict == "Contradicted": S_llm_verdict = 0.90
     
     S_semantic_sim = 0.0
-    if EMBEDDING_MODEL and claim and valid_sources:
-        try:
-            evidence_texts = []
-            for s in valid_sources:
-                evidence_texts.append(s.get('snippet', ''))
-                evidence_texts.append(s.get('title', ''))
-                if s.get('data_value') is not None:
-                    evidence_texts.append(f"{s.get('line_description', '')} is {s.get('raw_data_value')}")
+    
+    try:
+        evidence_texts = []
+        for s in valid_sources:
+            evidence_texts.append(s.get('snippet', ''))
+            evidence_texts.append(s.get('title', ''))
+            if s.get('data_value') is not None:
+                evidence_texts.append(f"{s.get('line_description', '')} is {s.get('raw_data_value')}")
+        
+        evidence_texts = [t for t in evidence_texts if t and isinstance(t, str)]
 
-            evidence_texts = [t for t in evidence_texts if t and isinstance(t, str)]
+        if evidence_texts:
+            claim_embedding = await get_embedding_api(claim)
+            
+            evidence_tasks = [get_embedding_api(text) for text in evidence_texts]
+            evidence_embeddings = await asyncio.gather(*evidence_tasks)
+            
+            valid_embeddings = [emb for emb in evidence_embeddings if emb]
+            
+            if claim_embedding and valid_embeddings:
+                similarities = [cosine_similarity(claim_embedding, emb) for emb in valid_embeddings]
+                S_semantic_sim = round(float(max(similarities)), 2)
+            else:
+                S_semantic_sim = 0.3
 
-            if evidence_texts:
-                claim_embedding = EMBEDDING_MODEL.encode(claim, convert_to_tensor=True)
-                evidence_embeddings = EMBEDDING_MODEL.encode(evidence_texts, convert_to_tensor=True)
-                
-                similarities = util.pytorch_cos_sim(claim_embedding, evidence_embeddings)
-                
-                S_semantic_sim = round(float(torch.max(similarities)), 2)
-
-        except Exception as e:
-            logger.error("Error during semantic similarity calculation: %s", e)
-            S_semantic_sim = 0.3 
+    except Exception as e:
+        logger.error("Error during semantic similarity API calculation: %s", e)
+        S_semantic_sim = 0.3 
     
     S = round((S_llm_verdict * 0.7) + (S_semantic_sim * 0.3), 2)
 
@@ -628,7 +665,7 @@ async def verify(req: VerifyRequest):
         verdict = synthesis_result.get("verdict", "Inconclusive")
         summary_text = f"{synthesis_result.get('summary','')} {synthesis_result.get('justification','')}".strip()
 
-        confidence_data = compute_confidence(sources_results, verdict, claim_norm)
+        confidence_data = await compute_confidence(sources_results, verdict, claim_norm)
         
         confidence_val = confidence_data["confidence"]
 

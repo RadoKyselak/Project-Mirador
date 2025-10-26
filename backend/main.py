@@ -545,7 +545,7 @@ INSTRUCTIONS:
     - "Inconclusive": If the evidence is missing, insufficient, ambiguous, or irrelevant to make a clear judgment.
 7.  Write a concise `summary` (1 sentence) stating the final conclusion based on the evidence.
 8.  Write a brief `justification` (1-2 sentences) explaining *why* you reached that verdict, citing specific data points.
-9.  Create `evidence_links` (list of {{"finding": "...", "source_url": "..."}}) linking key data to their source URLs.
+9. Create 'evidence_links'... **You must be extremely careful to match each finding to the *exact* source_url it came from in the evidence context.** Do not duplicate URLs if the findings are different. (list of {{"finding": "...", "source_url": "..."}}) linking key data to their source URLs.
 
 Return ONLY a single valid JSON object with keys: "verdict", "summary", "justification", "evidence_links".
 Example Response:
@@ -718,3 +718,4 @@ async def verify(req: VerifyRequest):
                 }
             ],
         }
+

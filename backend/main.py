@@ -14,7 +14,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(level
 logger = logging.getLogger(__name__)
 
 REQUIRED_KEYS = [
-    "GEMINI_API_KEY", "BEA_API_KEY", "CENSUS_API_KEY", "CONGRESS_API_KEY"
+    "GEMINI_API_KEY", "BEA_API_KEY", "CENSUS_API_KEY", "BLS_API_KEY", "CONGRESS_API_KEY"
 ]
 
 def check_api_keys_on_startup():
@@ -43,6 +43,7 @@ BEA_API_KEY = os.getenv("BEA_API_KEY")
 CENSUS_API_KEY = os.getenv("CENSUS_API_KEY")
 CONGRESS_API_KEY = os.getenv("CONGRESS_API_KEY")
 DATA_GOV_API_KEY = os.getenv("DATA_GOV_API_KEY")
+BLS_API_KEY = os.getenv("BLS_API_KEY")
 
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 GEMINI_ENDPOINT = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
@@ -171,7 +172,7 @@ def cosine_similarity(vec1: List[float], vec2: List[float]) -> float:
 async def analyze_claim_for_api_plan(claim: str) -> Dict[str, Any]:
     """Uses LLM to generate an API query plan based on the claim."""
     prompt_template = """
-    You are a research analyst expert in U.S. government data APIs (BEA, Census, Data.gov).
+    You are a research analyst expert in U.S. government data APIs (BEA, Census, Data.gov, BLS).
     Analyze the user's claim and generate a plan to verify it using these APIs.
 
     Identify:
@@ -179,11 +180,12 @@ async def analyze_claim_for_api_plan(claim: str) -> Dict[str, Any]:
     2.  `claim_type`: Classification (e.g., quantitative_comparison, quantitative_value, factual, legislative, other).
     3.  `entities`: Key concepts/metrics mentioned (e.g., ["GDP", "Inflation Rate"], ["Defense Spending", "Education Spending"]).
     4.  `relationship`: The asserted link (e.g., "greater than", "less than", "correlation", "existence", "value is X").
-    5.  `api_plan`: JSON with `tier1_params` (for specific BEA/Census calls) and `tier2_keywords` (for Data.gov/Congress search).
+    5.  `api_plan`: JSON with `tier1_params` (for specific BEA/Census/BLS calls) and `tier2_keywords` (for Data.gov/Congress search).
 
     AVAILABLE APIs:
     - BEA: NIPA dataset (T31600 for spending by function). Use LineCodes (e.g., 2 for Defense, 14 for Education).
     - Census ACS (American Community Survey): Use `census_acs` key. Provide `year`, `dataset` (e.g., "acs/acs1/profile"), `get` (variable codes, e.g., "NAME,DP05_0001E"), and `for` (geography, e.g., "state:01" for Alabama or "state:*" for all).
+    **- BLS (Bureau of Labor Statistics): For inflation (CPI) or unemployment. Use `bls` key. Provide `metric` ("CPI" or "unemployment") and `year`.**
     - Data.gov (CKAN): Keyword search via catalog.data.gov.
     - Congress.gov: Keyword search for legislative info.
 
@@ -200,7 +202,8 @@ async def analyze_claim_for_api_plan(claim: str) -> Dict[str, Any]:
       "api_plan": {{
         "tier1_params": {{
           "bea": {{"DataSetName":"NIPA","TableName":"T31600","Frequency":"A","Year":"2023","LineCode":["2","14"]}},
-          "census_acs": null
+          "census_acs": null,
+          **"bls": null**
         }},
         "tier2_keywords": ["federal budget appropriations 2023 defense education", "OMB historical tables spending"]
       }}
@@ -220,11 +223,28 @@ async def analyze_claim_for_api_plan(claim: str) -> Dict[str, Any]:
             "dataset": "acs/acs1/profile",
             "get": "NAME,DP05_0001E",
             "for": "state:01"
-          }}
+          }},
+          **"bls": null**
         }},
         "tier2_keywords": ["alabama population 2022"]
       }}
     }}
+    
+    **Example for a claim about inflation:**
+    **{{
+      "claim_normalized": "Inflation in the US was over 3% in 2023.",
+      "claim_type": "quantitative_value",
+      "entities": ["US Inflation", "2023"],
+      "relationship": "greater than",
+      "api_plan": {{
+        "tier1_params": {{
+          "bea": null,
+          "census_acs": null,
+          "bls": {{"metric": "CPI", "year": "2023"}}
+        }},
+        "tier2_keywords": ["US inflation rate 2023"]
+      }}
+    }}**
     """
     prompt = prompt_template.format(claim=claim)
 
@@ -266,7 +286,7 @@ def pick_sources_from_type(claim_type: str) -> List[str]:
     """Selects APIs based on claim type (more robust)."""
     sources = {"DATA.GOV"}
     ct_lower = (claim_type or "").lower()
-    if "quantitative" in ct_lower: sources.update({"BEA", "CENSUS"})
+    if "quantitative" in ct_lower: sources.update({"BEA", "CENSUS", "BLS"})
     if "factual" in ct_lower: sources.add("CONGRESS")
     if "legislative" in ct_lower: sources.add("CONGRESS")
     return list(sources)
@@ -322,6 +342,105 @@ async def query_bea(params: Dict[str, Any]) -> List[Dict[str, Any]]:
             "raw_geo": item.get("GeoFips"),
         })
     return out
+
+async def query_bls(params: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """
+    Queries the BLS API for key metrics like CPI (inflation) or Unemployment.
+    Params expected: {"metric": "CPI" | "unemployment", "year": "YYYY"}
+    """
+    if not BLS_API_KEY:
+        return [{"error": "BLS_API_KEY missing", "source": "BLS", "status": "failed"}]
+
+    metric = params.get("metric")
+    year_str = params.get("year")
+    if not metric or not year_str:
+        return [{"error": "BLS query missing metric or year", "source": "BLS", "status": "failed"}]
+
+    try:
+        year_int = int(year_str)
+    except ValueError:
+        return [{"error": "BLS query invalid year", "source": "BLS", "status": "failed"}]
+
+    series_map = {
+        "CPI": "CUSR0000SA0",
+        "unemployment": "LNS14000000"
+    }
+    
+    series_id = series_map.get(metric)
+    if not series_id:
+        return [{"error": f"BLS metric '{metric}' not supported", "source": "BLS", "status": "failed"}]
+
+    start_year = str(year_int - 1) if metric == "CPI" else year_str
+    end_year = year_str
+
+    url = "https://api.bls.gov/publicAPI/v2/timeseries/data/"
+    payload = json.dumps({
+        "seriesid": [series_id],
+        "startyear": start_year,
+        "endyear": end_year,
+        "registrationKey": BLS_API_KEY,
+        "annualaverage": True
+    })
+    headers = {'Content-Type': 'application/json'}
+
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            r = await client.post(url, headers=headers, content=payload)
+            r.raise_for_status()
+            data = r.json()
+    except httpx.HTTPStatusError as e:
+        logger.error("BLS HTTP error %s: %s", e.response.status_code, e.response.text)
+        return [{"error": f"BLS API error: {e.response.status_code}", "source": "BLS", "status": "failed"}]
+    except httpx.RequestError as e:
+        logger.error("BLS request error: %s", str(e))
+        return [{"error": str(e), "source": "BLS", "status": "failed"}]
+
+    try:
+        series_data = data.get("Results", {}).get("series", [])
+        if not series_data:
+            return [{"error": "BLS returned no data for series", "source": "BLS", "status": "failed"}]
+
+        annual_data = series_data[0].get("data", [])
+        if not annual_data:
+            return [{"error": "BLS returned no annual data", "source": "BLS", "status": "failed"}]
+
+        year_values = {}
+        for item in annual_data:
+            if item.get("period") == "M13":
+                year_values[item.get("year")] = _parse_numeric_value(item.get("value"))
+        
+        if metric == "CPI":
+            current_val = year_values.get(year_str)
+            prev_val = year_values.get(str(year_int - 1))
+            
+            if current_val is None or prev_val is None:
+                return [{"error": f"BLS missing annual CPI data for {year_str} or {year_int-1}", "source": "BLS", "status": "failed"}]
+            
+            percent_change = ((current_val - prev_val) / prev_val) * 100
+            data_value = round(percent_change, 2)
+            snippet = f"Annual average CPI inflation rate for {year_str} was {data_value}%."
+            title = f"BLS: CPI Inflation Rate {year_str}"
+        
+        elif metric == "unemployment":
+            data_value = year_values.get(year_str)
+            if data_value is None:
+                return [{"error": f"BLS missing annual unemployment data for {year_str}", "source": "BLS", "status": "failed"}]
+            
+            snippet = f"Annual average unemployment rate for {year_str} was {data_value}%."
+            title = f"BLS: Unemployment Rate {year_str}"
+
+        return [{
+            "title": title,
+            "url": "https://api.bls.gov/publicAPI/v2/timeseries/data/",
+            "snippet": snippet,
+            "data_value": data_value,
+            "raw_data_value": str(data_value),
+            "unit": "%"
+        }]
+
+    except Exception as e:
+        logger.exception("Failed to parse BLS response")
+        return [{"error": f"BLS parsing error: {str(e)}", "source": "BLS", "status": "failed"}]
 
 async def query_census_acs(params: Dict[str, Any]) -> List[Dict[str, Any]]:
     """
@@ -479,7 +598,10 @@ async def execute_query_plan(plan: Dict[str, Any], claim_type: str) -> List[Dict
 
     if "CENSUS" in sources and tier1.get("census_acs"):
         tasks.append(query_census_acs(params=tier1["census_acs"]))
-
+    
+    if "BLS" in sources and tier1.get("bls"):
+        tasks.append(query_bls(params=tier1["bls"]))
+    
     for kw in tier2_kws:
         if "DATA.GOV" in sources: tasks.append(query_datagov(kw))
         if "CONGRESS" in sources: tasks.append(query_congress(keyword_query=kw))
@@ -521,44 +643,45 @@ async def synthesize_finding_with_llm(
     context = "\n---\n".join(context_parts)
 
     prompt = f"""
-You are an objective fact-checker. Analyze the provided evidence from U.S. government sources against the user's claim.
-
-USER'S CLAIM: '''{claim}'''
-Claim Analysis:
-- Normalized: {claim_analysis.get('claim_normalized', claim)}
-- Type: {claim_analysis.get('claim_type', 'Unknown')}
-- Entities: {claim_analysis.get('entities', [])}
-- Asserted Relationship: {claim_analysis.get('relationship', 'Unknown')}
-
-AVAILABLE EVIDENCE:
-{context}
-
-INSTRUCTIONS:
-1.  Carefully review the user's claim and its asserted relationship between entities.
-2.  Examine ALL evidence provided. Look for data points (like from BEA or Census) directly relevant to the claim's entities and timeframe.
-3.  For BEA data, apply the 'Multiplier' (e.g., a 'DataValue' of 1000 and 'UnitMultiplier' of 1000000 means 100,000,000,000).
-4.  For Census data, use the provided 'Data Point' values.
-5.  Compare the relevant findings from the evidence to the claim's assertion.
-6.  Determine the final `verdict`:
-    - "Supported": If the evidence *clearly and directly* supports the claim's assertion.
-    - "Contradicted": If the evidence *clearly and directly* contradicts the claim's assertion.
-    - "Inconclusive": If the evidence is missing, insufficient, ambiguous, or irrelevant to make a clear judgment.
-7.  Write a concise `summary` (1 sentence) stating the final conclusion based on the evidence.
-8.  Write a brief `justification` (1-2 sentences) explaining *why* you reached that verdict, citing specific data points.
-9. Create 'evidence_links'... **You must be extremely careful to match each finding to the *exact* source_url it came from in the evidence context.** Do not duplicate URLs if the findings are different. (list of {{"finding": "...", "source_url": "..."}}) linking key data to their source URLs.
-
-Return ONLY a single valid JSON object with keys: "verdict", "summary", "justification", "evidence_links".
-Example Response:
-{{
-  "verdict": "Contradicted",
-  "summary": "The data contradicts the claim that federal defense spending was less than education spending in 2023.",
-  "justification": "BEA data for 2023 shows National Defense spending (LineCode 2) was $XXX billion, while Education spending (LineCode 14) was $YYY billion. Since XXX > YYY, the claim is contradicted.",
-  "evidence_links": [
-    {{"finding": "National Defense Spending 2023 = $XXX billion", "source_url": "https://apps.bea.gov/api/data?..."}},
-    {{"finding": "Education Spending 2023 = $YYY billion", "source_url": "https://apps.bea.gov/api/data?..."}}
-  ]
-}}
-"""
+    You are an objective fact-checker. Analyze the provided evidence from U.S. government sources against the user's claim.
+    
+    USER'S CLAIM: '''{claim}'''
+    Claim Analysis:
+    - Normalized: {claim_analysis.get('claim_normalized', claim)}
+    - Type: {claim_analysis.get('claim_type', 'Unknown')}
+    - Entities: {claim_analysis.get('entities', [])}
+    - Asserted Relationship: {claim_analysis.get('relationship', 'Unknown')}
+    
+    AVAILABLE EVIDENCE:
+    {context}
+    
+    INSTRUCTIONS:
+    1.  Carefully review the user's claim and its asserted relationship between entities.
+    2.  Examine ALL evidence provided. Look for data points (like from BEA, Census, or BLS) directly relevant to the claim's entities and timeframe.
+    3.  For BEA data, apply the 'Multiplier' (e.g., a 'DataValue' of 1000 and 'UnitMultiplier' of 1000000 means 100,000,000,000).
+    4.  For Census data, use the provided 'Data Point' values.
+    **5.  For BLS data, use the 'Data Point' which represents a calculated percentage (e.g., 3.5 for 3.5%). The snippet will clarify the metric (e.g., "CPI inflation rate" or "unemployment rate").**
+    6.  Compare the relevant findings from the evidence to the claim's assertion.
+    7.  Determine the final `verdict`:
+        - "Supported": If the evidence *clearly and directly* supports the claim's assertion.
+        - "Contradicted": If the evidence *clearly and directly* contradicts the claim's assertion.
+        - "Inconclusive": If the evidence is missing, insufficient, ambiguous, or irrelevant to make a clear judgment.
+    8.  Write a concise `summary` (1 sentence) stating the final conclusion based on the evidence.
+    9.  Write a brief `justification` (1-2 sentences) explaining *why* you reached that verdict, citing specific data points.
+    10. Create `evidence_links` (list of {{"finding": "...", "source_url": "..."}}) linking key data to their source URLs. **You must be extremely careful to match each finding to the *exact* source_url it came from in the evidence context.**
+    
+    Return ONLY a single valid JSON object with keys: "verdict", "summary", "justification", "evidence_links".
+    Example Response:
+    {{
+      "verdict": "Contradicted",
+      "summary": "The data contradicts the claim that federal defense spending was less than education spending in 2023.",
+      "justification": "BEA data for 2023 shows National Defense spending (LineCode 2) was $XXX billion, while Education spending (LineCode 14) was $YYY billion. Since XXX > YYY, the claim is contradicted.",
+      "evidence_links": [
+        {{"finding": "National Defense Spending 2023 = $XXX billion", "source_url": "https://apps.bea.gov/api/data?..."}},
+        {{"finding": "Education Spending 2023 = $YYY billion", "source_url": "https://apps.bea.gov/api/data?..."}}
+      ]
+    }}
+    """
     try:
         res = await call_gemini(prompt)
         parsed = extract_json_block(res.get("text", ""))
@@ -593,19 +716,18 @@ async def compute_confidence(sources: List[Dict[str, Any]], verdict: str, claim:
     for s in valid_sources:
         url = (s.get("url") or "").lower()
         if "apps.bea.gov" in url: weight = 1.0
-        elif "api.census.gov" in url: weight = 1.0 
+        elif "api.census.gov" in url: weight = 1.0
+        elif "api.bls.gov" in url: weight = 1.0
         elif "api.congress.gov" in url: weight = 0.8
         elif "catalog.data.gov" in url: weight = 0.7
         else: weight = 0.6
         total_weight += weight
+    
     R = round(total_weight / len(valid_sources), 2)
-
     E = round(min(1.0, len(valid_sources) / 5.0), 2)
-
     S_llm_verdict = 0.5 
     if verdict == "Supported": S_llm_verdict = 0.95
     elif verdict == "Contradicted": S_llm_verdict = 0.90
-    
     S_semantic_sim = 0.0
     
     try:
@@ -718,4 +840,5 @@ async def verify(req: VerifyRequest):
                 }
             ],
         }
+
 

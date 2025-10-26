@@ -53,7 +53,7 @@ BEA_VALID_TABLES = {
 
 @app.get("/")
 async def health_check():
-    return {"status": "ok", "message": "Stelthar-API is running :)"}
+    return {"status": "ok", "message": "Stelthar-API is running."}
 
 class VerifyRequest(BaseModel):
     claim: str
@@ -558,6 +558,7 @@ async def verify(req: VerifyRequest):
             "debug_plan": analysis.get("api_plan", {}), 
             "debug_log": [{"error": f"Unhandled exception: {str(e)}", "source": "internal", "status": "failed"}],
         }
+
 
 
 

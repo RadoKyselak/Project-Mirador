@@ -15,3 +15,5 @@ Highlight any text, and our browser extension provides an evidence-based verdict
 - API-first design for easy integration into apps, dashboards, and extensions
 
 For systems that matter - Steltar
+
+Notice: BLS.gov cannot vouch for the data or analyses derived from these data after the data have been retrieved from BLS.gov.

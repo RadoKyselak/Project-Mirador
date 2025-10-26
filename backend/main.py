@@ -114,6 +114,7 @@ async def call_gemini(prompt: str) -> Dict[str, Any]:
             return {"raw": data, "text": text}
     except httpx.HTTPStatusError as e:
         logger.error(f"Gemini API HTTP error: {e.response.status_code} - {e.response.text}")
+        # Re-raise HTTPException so callers can handle it specifically if desired
         raise HTTPException(status_code=500, detail=f"Gemini API error: {e.response.status_code} - {e.response.text}")
     except (httpx.RequestError, json.JSONDecodeError) as e:
         logger.error(f"Error communicating with Gemini: {str(e)}")
@@ -128,10 +129,27 @@ async def analyze_claim_for_api_plan(claim: str) -> Dict[str, Any]:
         " - api_plan: {tier1_params: {bea: {...} or null, census: {...} or null }, tier2_keywords: [ ... ] }\n\n"
         f"USER CLAIM: '''{claim}'''\n\n"
         "Return a single valid JSON object. Example:\n"
-        '{ "claim_normalized": "...", "claim_type":"quantitative", "api_plan": {"tier1_params": {"bea": {"DataSetName":"NIPA","TableName":"T31600","Frequency":"A","Year":"2023","LineCode":[\"2\",\"14\"]}, "census": null}, "tier2_keywords": ["federal government defense spending 2023", "federal government education spending 2023"] } }\n"
+        '{ "claim_normalized": "...", "claim_type":"quantitative", "api_plan": {"tier1_params": {"bea": {"DataSetName":"NIPA","TableName":"T31600","Frequency":"A","Year":"2023","LineCode":[\"2\",\"14\"]}, "census": null}, "tier2_keywords": ["federal government defense spending 2023", "federal government education spending 2023"] } }\n'
     )
-    res = await call_gemini(prompt)
-    parsed_plan = extract_json_block(res["text"])
+    try:
+        res = await call_gemini(prompt)
+        parsed_plan = extract_json_block(res.get("text", ""))
+    except HTTPException as e:
+        # Gemini failed (network/401/other); log and fall back to a safe plan
+        logger.error(f"Gemini failed while generating API plan: {getattr(e, 'detail', str(e))}")
+        return {
+            "claim_normalized": claim,
+            "claim_type": "Other",
+            "api_plan": {"tier1_params": {}, "tier2_keywords": [claim]}
+        }
+    except Exception as e:
+        logger.exception("Unexpected error while calling Gemini to generate API plan.")
+        return {
+            "claim_normalized": claim,
+            "claim_type": "Other",
+            "api_plan": {"tier1_params": {}, "tier2_keywords": [claim]}
+        }
+
     if not parsed_plan:
         logger.warning(f"Could not parse API plan JSON for claim. Falling back to keyword search. Claim: '{claim}'")
         return {
@@ -155,12 +173,9 @@ def _parse_numeric_value(val: Any) -> Optional[float]:
         return None
     try:
         s = str(val).strip()
-        # remove commas, dollar signs and non-numeric trailing text
         s = s.replace(",", "").replace("$", "")
-        # handle parentheses for negatives
         if s.startswith("(") and s.endswith(")"):
             s = "-" + s[1:-1]
-        # strip non-numeric at end (e.g., "1000 billion" -> try parse first token)
         m = re.match(r"^(-?[\d\.eE+-]+)", s)
         if m:
             return float(m.group(1))
@@ -227,7 +242,6 @@ async def query_bea(params: Dict[str, Any] = None) -> List[Dict[str, Any]]:
 async def query_census(params: Dict[str, Any] = None, keyword_query: str = None) -> List[Dict[str, Any]]:
     if not CENSUS_API_KEY:
         return [{"error": "CENSUS_API_KEY is not configured", "source": "CENSUS", "status": "failed"}]
-    # Do not perform free-text queries against ACS endpoints (they return 400)
     if not params and not keyword_query:
         return []
 
@@ -470,8 +484,19 @@ async def summarize_with_evidence(claim: str, sources: List[Dict[str, Any]]) -> 
         "Return a single valid JSON object with keys: summary, justification, evidence_links."
     )
 
-    res = await call_gemini(prompt)
-    parsed_summary_data = extract_json_block(res["text"])
+    try:
+        res = await call_gemini(prompt)
+        parsed_summary_data = extract_json_block(res.get("text", ""))
+    except HTTPException as e:
+        logger.error(f"Gemini failed while summarizing evidence: {getattr(e,'detail',str(e))}")
+        # Include a hint in the default summary so it's easier to debug when the external API failed.
+        default_summary["justification"] = default_summary["justification"] + " (Gemini summarization failed or was unavailable.)"
+        return default_summary
+    except Exception:
+        logger.exception("Unexpected error while calling Gemini for summarization.")
+        default_summary["justification"] = default_summary["justification"] + " (Gemini summarization failed unexpectedly.)"
+        return default_summary
+
     if not parsed_summary_data:
         logger.error(f"Could not parse summary JSON for claim. Claim: '{claim}'")
         return default_summary

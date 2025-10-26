@@ -8,11 +8,6 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import httpx
-from sentence_transformers import SentenceTransformer, util
-import numpy as np
-
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
-logger = logging.getLogger(__name__)
 
 REQUIRED_KEYS = [
     "GEMINI_API_KEY", "BEA_API_KEY", "CENSUS_API_KEY", "CONGRESS_API_KEY"
@@ -563,5 +558,6 @@ async def verify(req: VerifyRequest):
             "debug_plan": analysis.get("api_plan", {}), 
             "debug_log": [{"error": f"Unhandled exception: {str(e)}", "source": "internal", "status": "failed"}],
         }
+
 
 

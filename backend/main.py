@@ -8,6 +8,8 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import httpx
+from sentence_transformers import SentenceTransformer, util
+import numpy as np
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -42,6 +44,13 @@ DATA_GOV_API_KEY = os.getenv("DATA_GOV_API_KEY")
 
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 GEMINI_ENDPOINT = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
+
+try:
+    EMBEDDING_MODEL = SentenceTransformer("all-MiniLM-L6-v2")
+    logger.info("SentenceTransformer model 'all-MiniLM-L6-v2' loaded.")
+except Exception as e:
+    logger.error("Failed to load SentenceTransformer model: %s. Semantic scoring will be disabled.", e)
+    EMBEDDING_MODEL = None
 
 BEA_VALID_TABLES = {
     "T10101", "T20305", "T31600", "T70500"
@@ -532,3 +541,4 @@ async def verify(req: VerifyRequest):
             "debug_plan": analysis.get("api_plan", {}), 
             "debug_log": [{"error": f"Unhandled exception: {str(e)}", "source": "internal", "status": "failed"}],
         }
+

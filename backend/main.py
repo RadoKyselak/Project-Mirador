@@ -165,7 +165,6 @@ def pick_sources_from_type(claim_type: str) -> List[str]:
     return sources
 
 # --- API Calls ---
-
 async def query_bea(params: Dict[str, Any] = None) -> List[Dict[str, Any]]:
     if not BEA_API_KEY: return [{"error": "BEA_API_KEY is not configured", "source": "BEA", "status": "failed"}]
     if not params: return []
@@ -174,7 +173,7 @@ async def query_bea(params: Dict[str, Any] = None) -> List[Dict[str, Any]]:
         'UserID': BEA_API_KEY, 'method': 'GetData', 'ResultFormat': 'json',
         'DataSetName': params.get('DataSetName'), 'TableName': params.get('TableName'),
         'Frequency': params.get('Frequency'), 'Year': params.get('Year'),
-        'LineCode': params.get('LineCode')
+        'LineCode': params.get('LineCode'), 'GeoFips': params.get('GeoFips')
     }
     url = "https://apps.bea.gov/api/data"
     try:
@@ -186,8 +185,15 @@ async def query_bea(params: Dict[str, Any] = None) -> List[Dict[str, Any]]:
             
             if results:
                 item = results[0]
-                desc = item.get('LineDescription', 'Data')
-                snippet = f"{desc} for {item.get('TimePeriod')} was ${item.get('DataValue')} billion."
+                desc = item.get('LineDescription') or item.get('SeriesDescription') or 'Data'
+                data_value = item.get('DataValue', '')
+                unit = item.get('Unit') or item.get('Units') or item.get('UnitOfMeasure') or ''
+                time_period = item.get('TimePeriod') or item.get('Year') or final_params.get('Year')
+                snippet = f"{desc} for {time_period} was {data_value}"
+                if unit:
+                    snippet += f" {unit}."
+                else:
+                    snippet += "."
                 return [{"title": f"BEA Dataset: {params.get('DataSetName')} - {params.get('TableName')}", "url": str(r.url), "snippet": snippet}]
             else:
                 logger.info(f"BEA returned no Data entries for params: {final_params}")
@@ -198,6 +204,29 @@ async def query_bea(params: Dict[str, Any] = None) -> List[Dict[str, Any]]:
     except Exception as e:
         logger.error(f"BEA API General Error: {str(e)}", exc_info=True)
         return [{"error": str(e), "source": "BEA", "status": "failed"}]
+
+async def query_census(params: Dict[str, Any] = None, keyword_query: str = None) -> List[Dict[str, Any]]:
+    if not CENSUS_API_KEY: return [{"error": "CENSUS_API_KEY is not configured", "source": "CENSUS", "status": "failed"}]
+    if not params and not keyword_query: 
+        return []
+    if params:
+        final_params = {'key': CENSUS_API_KEY}
+        url = f"https://api.census.gov{params.get('endpoint')}"
+        final_params.update(params.get('params', {}))
+        try:
+            async with httpx.AsyncClient(timeout=20.0) as client:
+                r = await client.get(url, params=final_params)
+                r.raise_for_status()
+                return [{"title": f"Census Data for '{params.get('endpoint')}'", "url": str(r.url), "snippet": str(r.json()[:3])[:700]}]
+        except httpx.HTTPStatusError as e:
+            logger.error(f"Census API HTTP Error: {e.response.status_code} - {e.response.text}")
+            return [{"error": f"Census API error: {e.response.status_code}", "source": "CENSUS", "status": "failed"}]
+        except Exception as e:
+            logger.error(f"Census API General Error: {str(e)}", exc_info=True)
+            return [{"error": str(e), "source": "CENSUS", "status": "failed"}]
+    else:
+        logger.warning("Keyword-based Census searches are disabled for the ACS endpoint (would return 400). Use tier1 census params or search via Data.gov.")
+        return []
 
 async def query_census(params: Dict[str, Any] = None, keyword_query: str = None) -> List[Dict[str, Any]]:
     if not CENSUS_API_KEY: return [{"error": "CENSUS_API_KEY is not configured", "source": "CENSUS", "status": "failed"}]
@@ -274,6 +303,7 @@ async def query_datagov(keyword_query: str) -> List[Dict[str, str]]:
         logger.error(f"Data.gov API General Error: {str(e)}", exc_info=True)
         return [{"error": str(e), "source": "DATA.GOV", "status": "failed"}]
 
+
 async def execute_query_plan(plan: Dict, claim_type: str) -> List[Dict[str, Any]]:
     tier1_params = plan.get('tier1_params', {})
     tier2_keywords = plan.get('tier2_keywords', [])
@@ -304,8 +334,6 @@ async def execute_query_plan(plan: Dict, claim_type: str) -> List[Dict[str, Any]
     for keyword in tier2_keywords:
         if "DATA.GOV" in sources_to_query:
             tasks.append(query_datagov(keyword))
-        if "CENSUS" in sources_to_query and not tier1_params.get("census"):
-            tasks.append(query_census(keyword_query=keyword))
         if "CONGRESS" in sources_to_query:
             tasks.append(query_congress(keyword_query=keyword))
 
@@ -467,3 +495,4 @@ async def verify(req: VerifyRequest):
         "debug_plan": api_plan,
         "debug_log": debug_errors
     }
+

@@ -13,6 +13,9 @@ REQUIRED_KEYS = [
     "GEMINI_API_KEY", "BEA_API_KEY", "CENSUS_API_KEY", "CONGRESS_API_KEY"
 ]
 
+logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO)
+
 def check_api_keys_on_startup():
     logger.info("Startup: checking for required API keys...")
     missing = [k for k in REQUIRED_KEYS if k != "DATA_GOV_API_KEY" and not os.getenv(k)]
@@ -551,6 +554,7 @@ async def verify(req: VerifyRequest):
             "debug_plan": analysis.get("api_plan", {}), 
             "debug_log": [{"error": f"Unhandled exception: {str(e)}", "source": "internal", "status": "failed"}],
         }
+
 
 
 

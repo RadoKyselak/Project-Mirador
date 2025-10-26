@@ -370,8 +370,8 @@ async def execute_query_plan(plan: Dict[str, Any], claim_type: str) -> List[Dict
                 else: logger.warning("Skipping invalid BEA LineCode: %s", code)
         else: logger.warning("BEA table invalid/missing: %s", table)
 
-    if "CENSUS" in sources and tier1.get("census"):
-        tasks.append(query_census(params=tier1["census"]))
+    if "CENSUS" in sources and tier1.get("census_acs"):
+        tasks.append(query_census(params=tier1["census_acs"]))
 
     for kw in tier2_kws:
         if "DATA.GOV" in sources: tasks.append(query_datagov(kw))
@@ -551,6 +551,7 @@ async def verify(req: VerifyRequest):
             "debug_plan": analysis.get("api_plan", {}), 
             "debug_log": [{"error": f"Unhandled exception: {str(e)}", "source": "internal", "status": "failed"}],
         }
+
 
 
 

@@ -1,5 +1,5 @@
 # Stelthar API
-Stelthar provides real-time, governemnt-backed data fact-checking for a better, more transparent version of the internet.
+Stelthar provides real-time, government-backed data fact-checking for a better, more transparent version of the internet.
 
 Disinformation erodes public trust, and traditional fact-checking is slow. Stelthar's fact-checking verifies or argues claims by comparing claim validity against official government data sources.
 

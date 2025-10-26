@@ -18,12 +18,14 @@ REQUIRED_KEYS = [
 ]
 
 def check_api_keys_on_startup():
-    logger.info("Checking for required API keys...")
+    # Make startup tolerant: log missing keys but do not crash the process.
+    logger.info("Checking for required API keys (startup check)...")
     missing_keys = [key for key in REQUIRED_KEYS if not os.getenv(key)]
     if missing_keys:
-        logger.critical(f"FATAL: Missing required environment variables: {', '.join(missing_keys)}")
-        raise RuntimeError(f"Missing required environment variables: {', '.join(missing_keys)}")
-    logger.info("All required API keys are configured.")
+        logger.warning(f"Missing environment variables: {', '.join(missing_keys)}. "
+                       "The API will still start; individual calls will fail if they require those keys.")
+    else:
+        logger.info("All required API keys are configured.")
 
 app = FastAPI(on_startup=[check_api_keys_on_startup])
 
@@ -61,6 +63,7 @@ class VerifyRequest(BaseModel):
 def extract_json_block(text: str) -> Optional[Dict[str, Any]]:
     if not text:
         return None
+    # Try to find the first balanced JSON object in text
     start = text.find("{")
     if start == -1:
         return None
@@ -76,6 +79,7 @@ def extract_json_block(text: str) -> Optional[Dict[str, Any]]:
                 try:
                     return json.loads(candidate)
                 except json.JSONDecodeError:
+                    # try a naive bracket-trim approach if nested comments break it
                     try:
                         cleaned = re.sub(r'[\x00-\x1f]', '', candidate)
                         return json.loads(cleaned)
@@ -97,11 +101,16 @@ async def call_gemini(prompt: str) -> Dict[str, Any]:
             r.raise_for_status()
             data = r.json()
             text = ""
-            if isinstance(data.get("candidates"), list) and len(data["candidates"]) > 0:
-                cand = data["candidates"][0]
-                text = cand.get("content", {}).get("parts", [{}])[0].get("text", "") or cand.get("output", "")
-            if not text:
-                text = data.get("output", "") or data.get("text", "") or json.dumps(data)
+            # handle different shapes safely
+            if isinstance(data, dict):
+                if isinstance(data.get("candidates"), list) and len(data["candidates"]) > 0:
+                    cand = data["candidates"][0]
+                    text = cand.get("content", {}).get("parts", [{}])[0].get("text", "") or cand.get("output", "")
+                if not text:
+                    text = data.get("output", "") or data.get("text", "") or json.dumps(data)
+            else:
+                # not a dict as expected, stringify
+                text = json.dumps(data)
             return {"raw": data, "text": text}
     except httpx.HTTPStatusError as e:
         logger.error(f"Gemini API HTTP error: {e.response.status_code} - {e.response.text}")
@@ -111,6 +120,7 @@ async def call_gemini(prompt: str) -> Dict[str, Any]:
         raise HTTPException(status_code=500, detail=f"Error communicating with Gemini: {str(e)}")
 
 async def analyze_claim_for_api_plan(claim: str) -> Dict[str, Any]:
+    # Simplified prompt for determining plan; keep it structured so extract_json_block can parse it
     prompt = (
         "You are a research analyst and U.S. government data expert. Decompose the user's claim into:\n"
         " - claim_normalized (short verifiable statement)\n"
@@ -139,14 +149,18 @@ def pick_sources_from_type(claim_type: str) -> List[str]:
         sources.append("CONGRESS")
     return sources
 
+# --- Utility helpers ---
 def _parse_numeric_value(val: Any) -> Optional[float]:
     if val is None:
         return None
     try:
         s = str(val).strip()
+        # remove commas, dollar signs and non-numeric trailing text
         s = s.replace(",", "").replace("$", "")
+        # handle parentheses for negatives
         if s.startswith("(") and s.endswith(")"):
             s = "-" + s[1:-1]
+        # strip non-numeric at end (e.g., "1000 billion" -> try parse first token)
         m = re.match(r"^(-?[\d\.eE+-]+)", s)
         if m:
             return float(m.group(1))
@@ -213,6 +227,7 @@ async def query_bea(params: Dict[str, Any] = None) -> List[Dict[str, Any]]:
 async def query_census(params: Dict[str, Any] = None, keyword_query: str = None) -> List[Dict[str, Any]]:
     if not CENSUS_API_KEY:
         return [{"error": "CENSUS_API_KEY is not configured", "source": "CENSUS", "status": "failed"}]
+    # Do not perform free-text queries against ACS endpoints (they return 400)
     if not params and not keyword_query:
         return []
 
@@ -224,6 +239,7 @@ async def query_census(params: Dict[str, Any] = None, keyword_query: str = None)
             async with httpx.AsyncClient(timeout=20.0) as client:
                 r = await client.get(url, params=final_params)
                 r.raise_for_status()
+                # return a short snippet of the JSON response
                 snippet = ""
                 try:
                     snippet = str(r.json()[:3])[:700]
@@ -237,6 +253,7 @@ async def query_census(params: Dict[str, Any] = None, keyword_query: str = None)
             logger.error(f"Census API General Error: {str(e)}", exc_info=True)
             return [{"error": str(e), "source": "CENSUS", "status": "failed"}]
     else:
+        # Keyword-only census requests are disabled to avoid 400s on ACS endpoints.
         logger.warning("Keyword-based Census searches are disabled for ACS endpoints. Use tier1 census params or search via Data.gov.")
         return []
 
@@ -264,6 +281,7 @@ async def query_congress(keyword_query: str = None) -> List[Dict[str, Any]]:
 async def query_datagov(keyword_query: str) -> List[Dict[str, str]]:
     if not keyword_query:
         return []
+    # prefer CKAN package_search endpoint; it usually doesn't require an API key and is robust
     url = "https://catalog.data.gov/api/3/action/package_search"
     params = {"q": keyword_query, "rows": 5}
     try:
@@ -295,6 +313,7 @@ async def execute_query_plan(plan: Dict, claim_type: str) -> List[Dict[str, Any]
     sources_to_query = pick_sources_from_type(claim_type)
     tasks = []
 
+    # BEA: support single LineCode or list of LineCodes (create separate BEA tasks for each)
     if "BEA" in sources_to_query and tier1_params.get("bea"):
         bea_params_base = tier1_params.get("bea").copy()
         table_name = bea_params_base.get("TableName")
@@ -303,6 +322,7 @@ async def execute_query_plan(plan: Dict, claim_type: str) -> List[Dict[str, Any]
             for code in lc:
                 try:
                     sub = bea_params_base.copy()
+                    # sanitize code to digits if possible
                     digits = re.findall(r"\d+", str(code))
                     if digits:
                         sub["LineCode"] = digits[0]
@@ -328,9 +348,11 @@ async def execute_query_plan(plan: Dict, claim_type: str) -> List[Dict[str, Any]
             else:
                 logger.debug("No BEA TableName provided in plan, skipping.")
 
+    # Only make Census calls if tier1_params.census is present and valid. Do NOT do keyword-driven ACS calls.
     if "CENSUS" in sources_to_query and tier1_params.get("census"):
         tasks.append(query_census(params=tier1_params.get("census")))
 
+    # For tier2 keywords: query Data.gov and Congress (if applicable). Avoid ACS keyword queries.
     for keyword in tier2_keywords:
         if "DATA.GOV" in sources_to_query:
             tasks.append(query_datagov(keyword))
@@ -342,6 +364,7 @@ async def execute_query_plan(plan: Dict, claim_type: str) -> List[Dict[str, Any]
         return []
 
     query_results = await asyncio.gather(*tasks)
+    # flatten results; keep only non-empty sublists
     flattened = []
     for sublist in query_results:
         if sublist:
@@ -368,6 +391,7 @@ async def summarize_with_evidence(claim: str, sources: List[Dict[str, Any]]) -> 
     if not valid_sources:
         return default_summary
 
+    # heuristics to detect defense and education rows
     def _is_defense(s: Dict[str, Any]) -> bool:
         txt = " ".join(filter(None, [str(s.get("line_description", "")).lower(), s.get("title", "").lower(), s.get("snippet", "").lower()]))
         return any(k in txt for k in ["defense", "national defense", "military", "national security"])
@@ -385,6 +409,7 @@ async def summarize_with_evidence(claim: str, sources: List[Dict[str, Any]]) -> 
                 defense_row = r
             if not education_row and _is_education(r):
                 education_row = r
+        # fallback matching by common line_code hints
         if not defense_row:
             for r in bea_rows:
                 if str(r.get("line_code", "")).strip() in ("2", "02"):
@@ -394,6 +419,7 @@ async def summarize_with_evidence(claim: str, sources: List[Dict[str, Any]]) -> 
                 if str(r.get("line_code", "")).strip() in ("14", "014"):
                     education_row = r
 
+    # If both numeric rows available, do deterministic comparison
     if defense_row and education_row and defense_row.get("data_value") is not None and education_row.get("data_value") is not None:
         try:
             dv = float(defense_row["data_value"])
@@ -418,6 +444,7 @@ async def summarize_with_evidence(claim: str, sources: List[Dict[str, Any]]) -> 
         except Exception:
             logger.exception("Failed numeric comparison despite available BEA rows; will fallback to Gemini summarization.")
 
+    # Build filtered context for Gemini to avoid noise from unrelated sources
     relevance_kws = ["defense", "national defense", "military", "education", "education and training", "omb", "expenditure", "spending", "appropriations"]
     filtered = []
     for s in valid_sources:
@@ -427,8 +454,9 @@ async def summarize_with_evidence(claim: str, sources: List[Dict[str, Any]]) -> 
     if not filtered:
         filtered = valid_sources
 
-    unique_sources = {s['url']: s for s in filtered if s.get("url")}.values()
-    context = "\n---\n".join([f"Source Title: {s.get('title')}\nURL: {s.get('url')}\nSnippet: {s.get('snippet')}" for s in unique_sources])
+    # use s.get('url') to avoid KeyError when url missing
+    unique_sources = {s.get('url'): s for s in filtered if s.get("url")}
+    context = "\n---\n".join([f"Source Title: {s.get('title')}\nURL: {s.get('url')}\nSnippet: {s.get('snippet')}" for s in unique_sources.values()])
 
     prompt = (
         "You are a meticulous and impartial fact-checker. Analyze the provided evidence from U.S. government data sources and synthesize a definitive conclusion about the claim.\n"
@@ -473,7 +501,8 @@ def compute_confidence(sources: List[Dict[str, Any]], summary_text: str) -> Dict
     E = round(min(1.0, n / 5), 2)
 
     summary_lower = summary_text.lower()
-    if "data supports" in summary_lower or "data confirms" in summary_lower or "indicates" in summary_lower and "exceeded" in summary_lower:
+    # make boolean precedence explicit
+    if ("data supports" in summary_lower or "data confirms" in summary_lower) or ("indicates" in summary_lower and "exceeded" in summary_lower):
         S = 0.95
     elif "data contradicts" in summary_lower:
         S = 0.9
@@ -505,28 +534,34 @@ async def verify(req: VerifyRequest):
     if debug_errors:
         logger.warning(f"Encountered {len(debug_errors)} errors during API fetch for claim: '{claim}'")
 
+    # reduce noise: keep relevant sources for summarization and confidence calc
     relevant_sources = []
     for s in sources_results:
-        url = s.get("url", "") or ""
-        title = s.get("title", "") or ""
-        snippet = s.get("snippet", "") or ""
-        txt = " ".join([url.lower(), title.lower(), snippet.lower()])
-        if "defense" in txt or "education" in txt or "bea" in url or "data.ed.gov" in url or "apps.bea.gov" in url:
+        url = (s.get("url") or "").lower()
+        title = (s.get("title") or "").lower()
+        snippet = (s.get("snippet") or "").lower()
+        txt = " ".join([url, title, snippet])
+        if "defense" in txt or "education" in txt or "apps.bea.gov" in url or "data.ed.gov" in url or "catalog.data.gov" in url:
             relevant_sources.append(s)
     if not relevant_sources:
         relevant_sources = sources_results
 
     summary_data = await summarize_with_evidence(claim_norm, relevant_sources)
 
-    summary_text = f"{summary_data.get('summary', '')} {summary_data.get('justification', '')}"
+    summary_text = f"{summary_data.get('summary', '')} {summary_data.get('justification', '')}".strip()
 
     confidence_data = compute_confidence(relevant_sources, summary_text)
     confidence_val = confidence_data["confidence"]
 
     summary_lower = summary_text.lower()
-    if "data supports" in summary_lower or "indicates federal spending on national defense exceeded" in summary_lower or "exceeded" in summary_lower and "defense" in summary_lower:
+    # make decision heuristics explicit and safe
+    if "exceeded" in summary_lower and "defense" in summary_lower:
         verdict = "Supported"
-    elif "data contradicts" in summary_lower or "exceeded" in summary_lower and "education" in summary_lower and "defense" not in summary_lower:
+    elif "exceeded" in summary_lower and "education" in summary_lower and "defense" not in summary_lower:
+        verdict = "Contradicted"
+    elif "data supports" in summary_lower or "data confirms" in summary_lower:
+        verdict = "Supported"
+    elif "data contradicts" in summary_lower:
         verdict = "Contradicted"
     else:
         verdict = "Inconclusive"

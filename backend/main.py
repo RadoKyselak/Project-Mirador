@@ -901,7 +901,7 @@ async def synthesize_finding_with_llm(
         - "Inconclusive": If evidence is missing, insufficient, ambiguous, irrelevant, or requires assumptions beyond the data to make a clear judgment.
     8.  Write a concise `summary` (1-2 sentences) stating the final conclusion and the key evidence. **Format large numbers clearly using 'billion' or 'trillion' where appropriate (e.g., '$790.2 billion').**
     9.  Write a brief `justification` (1-2 sentences) explaining *why* you reached that verdict, referencing specific data points or lack thereof.
-    10. Create `evidence_links` (list of {{"finding": "...", "source_url": "..."}}) linking **only the most crucial data points** or findings cited in the justification back to their source URLs. Use the exact data point text (e.g., "National defense (G16046) = 790,895") or a concise summary of the finding as the "finding" value. **Match the finding precisely to the source URL provided in the evidence context.** Limit to 2-3 key links.
+    10. Create `evidence_links` (list of {{"finding": "...", "source_url": "..."}}) linking **only the most crucial data points** or findings cited in the justification back to their source URLs. Use the specific data identifier and value (e.g., "National defense (G16046) = 790,895") or a concise summary of the finding as the "finding" value. **The 'finding' string MUST NOT include the 'Unit' text (like 'Millions of Dollars') or the 'Multiplier' text (like '(Multiplier: 1000000)').** Match the finding precisely to the source URL provided in the evidence context. Limit to 2-3 key links.
 
     Return ONLY a single valid JSON object with keys: "verdict", "summary", "justification", "evidence_links".
 
@@ -911,8 +911,8 @@ async def synthesize_finding_with_llm(
       "summary": "The data contradicts the claim; federal spending on national defense ($790.9 billion) significantly exceeded spending on education ($178.6 billion) in 2023.",
       "justification": "BEA NIPA T31600 data for 2023 shows Federal National Defense (G16046) spending was $790,895 million, while Federal Education (G16068) spending was $178,621 million.",
       "evidence_links": [
-        {{"finding": "National defense (G16046) = 790,895 (Multiplier: null)", "source_url": "https://apps.bea.gov/api/data?..."}},
-        {{"finding": "Education (G16068) = 178,621 (Multiplier: null)", "source_url": "https://apps.bea.gov/api/data?..."}}
+        {{"finding": "National defense (G16046) = 790,895", "source_url": "https://apps.bea.gov/api/data?..."}},
+        {{"finding": "Education (G16068) = 178,621", "source_url": "https://apps.bea.gov/api/data?..."}}
       ]
     }}
     """
@@ -1122,6 +1122,7 @@ async def verify(req: VerifyRequest):
                 "status": "failed",
             }],
         }
+
 
 
 

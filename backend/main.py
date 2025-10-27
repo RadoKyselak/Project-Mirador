@@ -347,8 +347,8 @@ async def query_bea(params: Dict[str, Any]) -> List[Dict[str, Any]]:
 
     requested_line_code_str = str(params.get("LineCode", "")).strip()
     if not requested_line_code_str:
-          logger.warning("BEA query called without a specific LineCode in params.")
-          return [{"error": "BEA query missing LineCode", "source": "BEA", "status": "failed"}]
+        logger.warning("BEA query called without a specific LineCode in params.")
+        return [{"error": "BEA query missing LineCode", "source": "BEA", "status": "failed"}]
     is_requested_code_numeric = requested_line_code_str.isdigit()
 
     final_params = {
@@ -374,8 +374,8 @@ async def query_bea(params: Dict[str, Any]) -> List[Dict[str, Any]]:
         logger.error("BEA request error: %s", str(e))
         return [{"error": str(e), "source": "BEA", "status": "failed"}]
     except json.JSONDecodeError:
-          logger.error("BEA returned non-JSON response: %s", r.text[:200])
-          return [{"error": "BEA API returned invalid JSON", "source": "BEA", "status": "failed"}]
+        logger.error("BEA returned non-JSON response: %s", r.text[:200])
+        return [{"error": "BEA API returned invalid JSON", "source": "BEA", "status": "failed"}]
 
     results_data = payload.get("BEAAPI", {}).get("Results", {}).get("Data", [])
     out: List[Dict[str, Any]] = []
@@ -400,8 +400,8 @@ async def query_bea(params: Dict[str, Any]) -> List[Dict[str, Any]]:
                 "14": ["G16029", "G16068", "G16107"]
             }
             if params.get("TableName") == "T31600" and requested_line_code_str in known_mappings_t31600:
-                  if returned_line_code_str in known_mappings_t31600[requested_line_code_str]:
-                       match = True
+                if returned_line_code_str in known_mappings_t31600[requested_line_code_str]:
+                    match = True
 
         if not match:
             continue
@@ -428,15 +428,16 @@ async def query_bea(params: Dict[str, Any]) -> List[Dict[str, Any]]:
             "raw_year": item.get("TimePeriod"),
             "raw_geo": item.get("GeoFips"),
         })
-        if params.get("TableName") == "T31600":
-    for item_out in out:
-        if item_out.get("unit_multiplier") is None:
-            item_out["unit_multiplier"] = 1000000
-        if not item_out.get("unit"):
-            item_out["unit"] = "Millions of Dollars"
+
+    if params.get("TableName") == "T31600" and out:
+        for item_out in out:
+            if item_out.get("unit_multiplier") is None:
+                item_out["unit_multiplier"] = 1000000
+            if not item_out.get("unit"):
+                item_out["unit"] = "Millions of Dollars"
 
     if not found_match and results_data:
-          logger.warning("BEA returned data for params %s, but no rows matched filter for requested LineCode %s", api_params, requested_line_code_str)
+        logger.warning("BEA returned data for params %s, but no rows matched filter for requested LineCode %s", api_params, requested_line_code_str)
 
     return out
 
@@ -1121,6 +1122,7 @@ async def verify(req: VerifyRequest):
                 "status": "failed",
             }],
         }
+
 
 
 

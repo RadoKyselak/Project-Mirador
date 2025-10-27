@@ -429,13 +429,12 @@ async def query_bea(params: Dict[str, Any]) -> List[Dict[str, Any]]:
             "raw_geo": item.get("GeoFips"),
         })
         if params.get("TableName") == "T31600":
-        for item_out in out:
-            if item_out.get("unit_multiplier") is None:
-                 item_out["unit_multiplier"] = 1000000
-            if not item_out.get("unit"):
-                 item_out["unit"] = "Millions of Dollars"
+    for item_out in out:
+        if item_out.get("unit_multiplier") is None:
+            item_out["unit_multiplier"] = 1000000
+        if not item_out.get("unit"):
+            item_out["unit"] = "Millions of Dollars"
 
-        return out
     if not found_match and results_data:
           logger.warning("BEA returned data for params %s, but no rows matched filter for requested LineCode %s", api_params, requested_line_code_str)
 
@@ -1122,5 +1121,6 @@ async def verify(req: VerifyRequest):
                 "status": "failed",
             }],
         }
+
 
 

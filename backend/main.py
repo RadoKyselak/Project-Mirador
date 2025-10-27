@@ -45,7 +45,7 @@ CONGRESS_API_KEY = os.getenv("CONGRESS_API_KEY")
 DATA_GOV_API_KEY = os.getenv("DATA_GOV_API_KEY")
 BLS_API_KEY = os.getenv("BLS_API_KEY")
 
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-1.5-flash-latest")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 GEMINI_ENDPOINT = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
 EMBEDDING_MODEL_NAME = "text-embedding-004"
 GEMINI_EMBED_ENDPOINT = f"https://generativelanguage.googleapis.com/v1beta/models/{EMBEDDING_MODEL_NAME}:embedContent"
@@ -1115,3 +1115,4 @@ async def verify(req: VerifyRequest):
                 "status": "failed",
             }],
         }
+

@@ -586,12 +586,10 @@ async def query_datagov(keyword_query: str) -> List[Dict[str, str]]:
     except httpx.RequestError as e:
         logger.error("Data.gov request error: %s", str(e))
         return [{"error": str(e), "source": "DATA.GOV", "status": "failed"}]
-
 async def execute_query_plan(plan: Dict[str, Any], claim_type: str) -> List[Dict[str, Any]]:
-    """Executes API calls based on the plan."""
-    tier1 = plan.get("api_plan", {}).get("tier1_params", {}) or {}
-    tier2_kws = plan.get("api_plan", {}).get("tier2_keywords", []) or []
-    
+    tier1 = plan.get("tier1_params", {}) or {} 
+    tier2_kws = plan.get("tier2_keywords", []) or []    
+
     tasks = []
 
     if bea_params := tier1.get("bea"):
@@ -877,4 +875,5 @@ async def verify(req: VerifyRequest):
                 }
             ],
         }
+
 

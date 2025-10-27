@@ -8,13 +8,12 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import httpx
-from math import sqrt
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 REQUIRED_KEYS = [
-    "GEMINI_API_KEY", "BEA_API_KEY", "CENSUS_API_KEY", "BLS_API_KEY", "CONGRESS_API_KEY"
+    "GEMINI_API_KEY", "BEA_API_KEY", "CENSUS_API_KEY", "CONGRESS_API_KEY"
 ]
 
 def check_api_keys_on_startup():
@@ -43,12 +42,9 @@ BEA_API_KEY = os.getenv("BEA_API_KEY")
 CENSUS_API_KEY = os.getenv("CENSUS_API_KEY")
 CONGRESS_API_KEY = os.getenv("CONGRESS_API_KEY")
 DATA_GOV_API_KEY = os.getenv("DATA_GOV_API_KEY")
-BLS_API_KEY = os.getenv("BLS_API_KEY")
 
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 GEMINI_ENDPOINT = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
-EMBEDDING_MODEL_NAME = "text-embedding-004"
-GEMINI_EMBED_ENDPOINT = f"https://generativelanguage.googleapis.com/v1beta/models/{EMBEDDING_MODEL_NAME}:embedContent"
 
 BEA_VALID_TABLES = {
     "T10101", "T20305", "T31600", "T70500"
@@ -56,13 +52,12 @@ BEA_VALID_TABLES = {
 
 @app.get("/")
 async def health_check():
-    return {"status": "ok", "message": "Stelthar-API is running :)"}
+    return {"status": "ok", "message": "Stelthar-API is running."}
 
 class VerifyRequest(BaseModel):
     claim: str
 
 def extract_json_block(text: str) -> Optional[Dict[str, Any]]:
-    """Extract first balanced JSON object from text."""
     if not text: return None
     start = text.find("{")
     if start == -1: return None
@@ -84,7 +79,6 @@ def extract_json_block(text: str) -> Optional[Dict[str, Any]]:
     return None
 
 def _parse_numeric_value(val: Any) -> Optional[float]:
-    """Robustly parse numeric values from strings."""
     if val is None: return None
     try:
         s = str(val).strip().replace(",", "").replace("$", "")
@@ -94,19 +88,23 @@ def _parse_numeric_value(val: Any) -> Optional[float]:
     except Exception: return None
 
 def _apply_multiplier(value: Optional[float], multiplier: Optional[Any]) -> Optional[float]:
-    """Apply BEA unit multiplier if present and valid."""
     if value is None: return None
     if multiplier is None: return value
     try: return float(value) * float(multiplier)
     except Exception: return value
 
-async def call_gemini(prompt: str) -> Dict[str, Any]:
-    """Calls Gemini API, handles common errors, returns raw response dict."""
+async def call_gemini(prompt: str, tools: List[Dict] = None) -> Dict[str, Any]:
+    """Generic Gemini API caller, now with tool support."""
     if not GEMINI_API_KEY:
         logger.critical("GEMINI_API_KEY not configured.")
         raise HTTPException(status_code=500, detail="LLM API key not configured on server.")
+    
     headers = {"Content-Type": "application/json", "x-goog-api-key": GEMINI_API_KEY}
     body = {"contents": [{"role": "user", "parts": [{"text": prompt}]}]}
+    
+    if tools:
+        body["tools"] = [{"function_declarations": tools}]
+        
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
             r = await client.post(GEMINI_ENDPOINT, headers=headers, json=body)
@@ -119,401 +117,148 @@ async def call_gemini(prompt: str) -> Dict[str, Any]:
         logger.error("Gemini request error: %s", str(e))
         raise HTTPException(status_code=500, detail="Error communicating with LLM.")
 
-    text = ""
-    if isinstance(data, dict):
-        candidates = data.get("candidates", [])
-        if isinstance(candidates, list) and candidates:
-            content = candidates[0].get("content", {})
-            parts = content.get("parts", [])
-            if isinstance(parts, list) and parts:
-                text = parts[0].get("text", "")
-        if not text:
-            text = data.get("output", "") or data.get("text", "")
-    return {"raw": data, "text": text or json.dumps(data)}
-
-async def get_embedding_api(text: str) -> Optional[List[float]]:
-    """Calls the Google AI API to get text embeddings."""
-    if not GEMINI_API_KEY:
-        logger.warning("GEMINI_API_KEY not configured. Cannot get embeddings.")
-        return None
+    response = {"raw": data, "text": None, "tool_calls": []}
+    if candidates := data.get("candidates", []):
+        content = candidates[0].get("content", {})
+        if parts := content.get("parts", []):
+            for part in parts:
+                if text := part.get("text"):
+                    response["text"] = text
+                if func_call := part.get("functionCall"):
+                    response["tool_calls"].append(func_call)
     
-    headers = {"Content-Type": "application/json", "x-goog-api-key": GEMINI_API_KEY}
-    body = {"model": f"models/{EMBEDDING_MODEL_NAME}", "content": {"parts": [{"text": text}]}}
-    
-    try:
-        async with httpx.AsyncClient(timeout=20.0) as client:
-            r = await client.post(GEMINI_EMBED_ENDPOINT, headers=headers, json=body)
-            r.raise_for_status()
-            data = r.json()
-            embedding = data.get("embedding", {}).get("values", [])
-            return embedding if embedding else None
-    except httpx.HTTPStatusError as e:
-        logger.error("Gemini Embed API HTTP error %s: %s", e.response.status_code, e.response.text)
-        return None
-    except Exception as e:
-        logger.error("Error calling Gemini Embed API: %s", str(e))
-        return None
+    return response
 
-def cosine_similarity(vec1: List[float], vec2: List[float]) -> float:
-    """Calculates cosine similarity for two vectors."""
-    if not vec1 or not vec2 or len(vec1) != len(vec2):
-        return 0.0
-    
-    dot_product = sum(v1 * v2 for v1, v2 in zip(vec1, vec2))
-    
-    mag_vec1 = sqrt(sum(v**2 for v in vec1))
-    mag_vec2 = sqrt(sum(v**2 for v in vec2))
-    
-    if mag_vec1 == 0 or mag_vec2 == 0:
-        return 0.0
-        
-    return dot_product / (mag_vec1 * mag_vec2)
-
-async def analyze_claim_for_api_plan(claim: str) -> Dict[str, Any]:
-    """Uses LLM to generate an API query plan based on the claim."""
-    prompt_template = """
-    You are a research analyst expert in U.S. government data APIs (BEA, Census, Data.gov, BLS).
-    Analyze the user's claim and generate a plan to verify it using these APIs.
-
-    Identify:
-    1.  `claim_normalized`: A clear, verifiable statement.
-    2.  `claim_type`: Classification (e.g., quantitative_comparison, quantitative_value, factual, legislative, other).
-    3.  `entities`: Key concepts/metrics mentioned (e.g., ["GDP", "Inflation Rate"], ["Defense Spending", "Education Spending"]).
-    4.  `relationship`: The asserted link (e.g., "greater than", "less than", "correlation", "existence", "value is X").
-    5.  `api_plan`: JSON with `tier1_params` (for specific BEA/Census/BLS calls) and `tier2_keywords` (for Data.gov/Congress search).
-
-    AVAILABLE APIs:
-    - BEA: NIPA dataset (T31600 for spending by function). Use LineCodes (e.g., 2 for Defense, 14 for Education).
-    - Census ACS (American Community Survey): Use `census_acs` key. Provide `year`, `dataset` (e.g., "acs/acs1/profile"), `get` (variable codes, e.g., "NAME,DP05_0001E"), and `for` (geography, e.g., "state:01" for Alabama or "state:*" for all).
-    **- BLS (Bureau of Labor Statistics): For inflation (CPI) or unemployment. Use `bls` key. Provide `metric` ("CPI" or "unemployment") and `year`.**
-    - Data.gov (CKAN): Keyword search via catalog.data.gov.
-    - Congress.gov: Keyword search for legislative info.
-
-    USER CLAIM: '''{claim}'''
-
-    Return ONLY a single valid JSON object.
-
-    Example for a claim about defense spending:
-    {{
-      "claim_normalized": "Federal spending on defense exceeded education spending in 2023.",
-      "claim_type": "quantitative_comparison",
-      "entities": ["Federal Defense Spending", "Federal Education Spending"],
-      "relationship": "greater than",
-      "api_plan": {{
-        "tier1_params": {{
-          "bea": {{"DataSetName":"NIPA","TableName":"T31600","Frequency":"A","Year":"2023","LineCode":["2","14"]}},
-          "census_acs": null,
-          **"bls": null**
-        }},
-        "tier2_keywords": ["federal budget appropriations 2023 defense education", "OMB historical tables spending"]
-      }}
-    }}
-
-    Example for a claim about population:
-    {{
-      "claim_normalized": "The total population of Alabama in 2022 was over 5 million.",
-      "claim_type": "quantitative_value",
-      "entities": ["Alabama Population", "2022"],
-      "relationship": "value is X",
-      "api_plan": {{
-        "tier1_params": {{
-          "bea": null,
-          "census_acs": {{
-            "year": "2022",
-            "dataset": "acs/acs1/profile",
-            "get": "NAME,DP05_0001E",
-            "for": "state:01"
-          }},
-          **"bls": null**
-        }},
-        "tier2_keywords": ["alabama population 2022"]
-      }}
-    }}
-    
-    **Example for a claim about inflation:**
-    **{{
-      "claim_normalized": "Inflation in the US was over 3% in 2023.",
-      "claim_type": "quantitative_value",
-      "entities": ["US Inflation", "2023"],
-      "relationship": "greater than",
-      "api_plan": {{
-        "tier1_params": {{
-          "bea": null,
-          "census_acs": null,
-          "bls": {{"metric": "CPI", "year": "2023"}}
-        }},
-        "tier2_keywords": ["US inflation rate 2023"]
-      }}
-    }}**
+async def query_bea(
+    TableName: str, 
+    Year: str, 
+    LineCode: str, 
+    Frequency: str = "A", 
+    DataSetName: str = "NIPA"
+) -> List[Dict[str, Any]]:
     """
-    prompt = prompt_template.format(claim=claim)
-
-    fallback_keywords = [claim.strip()]
-    if len(claim.strip().split()) < 4:
-        fallback_keywords.append("general government statistics")
+    Queries the BEA NIPA API. Use for broad *economic functions* (e.g., 'total defense spending'), 
+    not specific agency budgets.
+    """
+    if TableName not in BEA_VALID_TABLES:
+        return [{"error": f"Invalid TableName. Must be one of: {BEA_VALID_TABLES}", "source": "BEA", "status": "failed"}]
+    if not BEA_API_KEY: 
+        return [{"error": "BEA_API_KEY missing", "source": "BEA", "status": "failed"}]
     
-    fallback_plan = {
-        "claim_normalized": claim,
-        "claim_type": "Other",
-        "entities": [],
-        "relationship": "unknown",
-        "api_plan": {
-            "tier1_params": {},
-            "tier2_keywords": fallback_keywords
-        }
-    }
-
-    try:
-        res = await call_gemini(prompt)
-        parsed = extract_json_block(res.get("text", ""))
-        if not parsed or "api_plan" not in parsed:
-            logger.warning("Could not parse valid plan JSON from LLM. Falling back.")
-            return fallback_plan
-        parsed.setdefault("claim_normalized", claim)
-        parsed.setdefault("claim_type", "Other")
-        parsed.setdefault("entities", [])
-        parsed.setdefault("relationship", "unknown")
-        parsed.setdefault("api_plan", {"tier1_params": {}, "tier2_keywords": [claim]})
-        return parsed
-    except HTTPException as e:
-        logger.error("LLM failed generating plan: %s", getattr(e, "detail", str(e)))
-        return fallback_plan
-    except Exception:
-        logger.exception("Unexpected error generating plan. Falling back.")
-        return fallback_plan
-
-def pick_sources_from_type(claim_type: str) -> List[str]:
-    """Selects APIs based on claim type (more robust)."""
-    sources = {"DATA.GOV"}
-    ct_lower = (claim_type or "").lower()
-    if "quantitative" in ct_lower: sources.update({"BEA", "CENSUS", "BLS"})
-    if "factual" in ct_lower: sources.add("CONGRESS")
-    if "legislative" in ct_lower: sources.add("CONGRESS")
-    return list(sources)
-    
-async def query_bea(params: Dict[str, Any]) -> List[Dict[str, Any]]:
-    if not BEA_API_KEY: return [{"error": "BEA_API_KEY missing", "source": "BEA", "status": "failed"}]
-    final_params = {
-        "UserID": BEA_API_KEY,"method": "GetData","ResultFormat": "json",
-        "DataSetName": params.get("DataSetName"), "TableName": params.get("TableName"),
-        "Frequency": params.get("Frequency"), "Year": params.get("Year"),
-        "LineCode": params.get("LineCode"), "GeoFips": params.get("GeoFips"),
+    params = {
+        "UserID": BEA_API_KEY, "method": "GetData", "ResultFormat": "json",
+        "DataSetName": DataSetName, "TableName": TableName,
+        "Frequency": Frequency, "Year": Year, "LineCode": LineCode
     }
     url = "https://apps.bea.gov/api/data"
     try:
         async with httpx.AsyncClient(timeout=20.0) as client:
-            r = await client.get(url, params={k: v for k, v in final_params.items() if v is not None})
+            r = await client.get(url, params={k: v for k, v in params.items() if v is not None})
             r.raise_for_status()
             payload = r.json()
-    except httpx.HTTPStatusError as e:
-        logger.error("BEA HTTP error %s: %s", e.response.status_code, e.response.text)
-        return [{"error": f"BEA API error: {e.response.status_code}", "source": "BEA", "status": "failed"}]
-    except httpx.RequestError as e:
-        logger.error("BEA request error: %s", str(e))
+    except Exception as e:
+        logger.error(f"BEA request error: {e}")
         return [{"error": str(e), "source": "BEA", "status": "failed"}]
 
     results = payload.get("BEAAPI", {}).get("Results", {}).get("Data", [])
-    out: List[Dict[str, Any]] = []
     if not results:
-        logger.info("BEA returned no rows for params: %s", {k:v for k,v in final_params.items() if v is not None})
-        return []
+        return [{"error": "No data found for parameters.", "source": "BEA", "status": "no_data"}]
 
+    out = []
     for item in results:
-        line_code_resp = item.get("LineCode") or item.get("SeriesCode") or final_params.get("LineCode")
-        desc = item.get("LineDescription") or item.get("SeriesDescription") or "Data"
-        data_value_raw = item.get("DataValue") or ""
+        data_value_raw = item.get("DataValue")
         numeric = _parse_numeric_value(data_value_raw)
-        unit = item.get("Unit") or ""
         unit_multiplier = item.get("UnitMultiplier")
-        time_period = item.get("TimePeriod") or final_params.get("Year")
-        snippet = f"{desc} ({line_code_resp}) for {time_period}: {data_value_raw}{' '+unit if unit else ''}."
-
+        final_value = _apply_multiplier(numeric, unit_multiplier)
+        
         out.append({
-            "title": f"BEA: {params.get('DataSetName')}/{params.get('TableName')}",
+            "title": f"BEA: {item.get('LineDescription')}",
             "url": str(r.url),
-            "snippet": snippet,
-            "data_value": numeric,
+            "snippet": f"{item.get('LineDescription')} ({item.get('LineCode')}) for {item.get('TimePeriod')}: {data_value_raw} (Unit: {item.get('Unit')}, Multiplier: {unit_multiplier}). Final Value: {final_value}",
+            "data_value": final_value,
             "raw_data_value": data_value_raw,
-            "unit": unit,
-            "unit_multiplier": unit_multiplier,
-            "line_description": desc,
-            "line_code": str(line_code_resp) if line_code_resp is not None else None,
-            "raw_year": item.get("TimePeriod"),
-            "raw_geo": item.get("GeoFips"),
+            "line_description": item.get('LineDescription'),
+            "line_code": item.get('LineCode'),
+            "year": item.get('TimePeriod')
         })
     return out
 
-async def query_bls(params: Dict[str, Any]) -> List[Dict[str, Any]]:
+async def query_census_acs(
+    year: str, 
+    dataset: str, 
+    get_vars: str, 
+    for_geo: str
+) -> List[Dict[str, Any]]:
     """
-    Queries the BLS API for key metrics like CPI (inflation) or Unemployment.
-    Params expected: {"metric": "CPI" | "unemployment", "year": "YYYY"}
-    """
-    if not BLS_API_KEY:
-        return [{"error": "BLS_API_KEY missing", "source": "BLS", "status": "failed"}]
-
-    metric = params.get("metric")
-    year_str = params.get("year")
-    if not metric or not year_str:
-        return [{"error": "BLS query missing metric or year", "source": "BLS", "status": "failed"}]
-
-    try:
-        year_int = int(year_str)
-    except ValueError:
-        return [{"error": "BLS query invalid year", "source": "BLS", "status": "failed"}]
-
-    series_map = {
-        "CPI": "CUSR0000SA0",
-        "unemployment": "LNS14000000"
-    }
-    
-    series_id = series_map.get(metric)
-    if not series_id:
-        return [{"error": f"BLS metric '{metric}' not supported", "source": "BLS", "status": "failed"}]
-
-    start_year = str(year_int - 1) if metric == "CPI" else year_str
-    end_year = year_str
-
-    url = "https://api.bls.gov/publicAPI/v2/timeseries/data/"
-    payload = json.dumps({
-        "seriesid": [series_id],
-        "startyear": start_year,
-        "endyear": end_year,
-        "registrationKey": BLS_API_KEY,
-        "annualaverage": True
-    })
-    headers = {'Content-Type': 'application/json'}
-
-    try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            r = await client.post(url, headers=headers, content=payload)
-            r.raise_for_status()
-            data = r.json()
-    except httpx.HTTPStatusError as e:
-        logger.error("BLS HTTP error %s: %s", e.response.status_code, e.response.text)
-        return [{"error": f"BLS API error: {e.response.status_code}", "source": "BLS", "status": "failed"}]
-    except httpx.RequestError as e:
-        logger.error("BLS request error: %s", str(e))
-        return [{"error": str(e), "source": "BLS", "status": "failed"}]
-
-    try:
-        series_data = data.get("Results", {}).get("series", [])
-        if not series_data:
-            return [{"error": "BLS returned no data for series", "source": "BLS", "status": "failed"}]
-
-        annual_data = series_data[0].get("data", [])
-        if not annual_data:
-            return [{"error": "BLS returned no annual data", "source": "BLS", "status": "failed"}]
-
-        year_values = {}
-        for item in annual_data:
-            if item.get("period") == "M13":
-                year_values[item.get("year")] = _parse_numeric_value(item.get("value"))
-        
-        if metric == "CPI":
-            current_val = year_values.get(year_str)
-            prev_val = year_values.get(str(year_int - 1))
-            
-            if current_val is None or prev_val is None:
-                return [{"error": f"BLS missing annual CPI data for {year_str} or {year_int-1}", "source": "BLS", "status": "failed"}]
-            
-            percent_change = ((current_val - prev_val) / prev_val) * 100
-            data_value = round(percent_change, 2)
-            snippet = f"Annual average CPI inflation rate for {year_str} was {data_value}%."
-            title = f"BLS: CPI Inflation Rate {year_str}"
-        
-        elif metric == "unemployment":
-            data_value = year_values.get(year_str)
-            if data_value is None:
-                return [{"error": f"BLS missing annual unemployment data for {year_str}", "source": "BLS", "status": "failed"}]
-            
-            snippet = f"Annual average unemployment rate for {year_str} was {data_value}%."
-            title = f"BLS: Unemployment Rate {year_str}"
-
-        return [{
-            "title": title,
-            "url": "https://api.bls.gov/publicAPI/v2/timeseries/data/",
-            "snippet": snippet,
-            "data_value": data_value,
-            "raw_data_value": str(data_value),
-            "unit": "%"
-        }]
-
-    except Exception as e:
-        logger.exception("Failed to parse BLS response")
-        return [{"error": f"BLS parsing error: {str(e)}", "source": "BLS", "status": "failed"}]
-
-async def query_census_acs(params: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """
-    Queries the Census ACS API (e.g., /data/2022/acs/acs1/profile).
-    Params expected: {"year": "YYYY", "dataset": "path", "get": "VARS", "for": "GEO"}
+    Queries the Census ACS API. Use for demographic data (e.g., population, income).
+    Example: year="2022", dataset="acs/acs1/profile", get_vars="NAME,DP05_0001E", for_geo="state:01"
     """
     if not CENSUS_API_KEY:
         return [{"error": "CENSUS_API_KEY missing", "source": "CENSUS", "status": "failed"}]
-    if not all(k in params for k in ["year", "dataset", "get", "for"]):
-        logger.warning("Census ACS query missing required params: %s", params)
-        return []
-
-    year = params["year"]
-    dataset = params["dataset"].strip("/")
     
     url = f"https://api.census.gov/data/{year}/{dataset}"
-    final_params = {
-        "key": CENSUS_API_KEY,
-        "get": params["get"],
-        "for": params["for"]
-    }
+    params = {"key": CENSUS_API_KEY, "get": get_vars, "for": for_geo}
     
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
-            r = await client.get(url, params=final_params)
+            r = await client.get(url, params=params)
             r.raise_for_status()
             data = r.json()
+        
+        if not data or len(data) < 2:
+            return [{"error": "No data found for parameters.", "source": "CENSUS", "status": "no_data"}]
 
-            if not data or len(data) < 2:
-                logger.info("Census query returned no data.")
-                return []
-
-            headers = data[0]
-            rows = data[1:]
-            results = []
-
-            for row in rows:
-                row_data = dict(zip(headers, row))
-                
-                snippet_parts = []
-                for k, v in row_data.items():
-                    if k.upper() not in ["KEY", "FOR", "IN", "STATE", "COUNTY"]:
-                        snippet_parts.append(f"{k}: {v}")
-                
-                snippet = f"Data for {row_data.get('NAME', params['for'])}: " + ", ".join(snippet_parts)
-                
-                primary_var = params["get"].split(",")[1] if "," in params["get"] else None
-                data_value_raw = row_data.get(primary_var)
-                numeric_val = _parse_numeric_value(data_value_raw)
-
-                results.append({
-                    "title": f"Census ACS: {params['get']} for {row_data.get('NAME', params['for'])}",
-                    "url": str(r.url),
-                    "snippet": snippet,
-                    "data_value": numeric_val,
-                    "raw_data_value": data_value_raw,
-                    "raw_census_row": row_data
-                })
-            return results
-
-    except httpx.HTTPStatusError as e:
-        logger.error("Census HTTP error %s: %s", e.response.status_code, e.response.text)
-        return [{"error": f"Census API error: {e.response.status_code}", "source": "CENSUS", "status": "failed"}]
-    except httpx.RequestError as e:
-        logger.error("Census request error: %s", str(e))
+        headers = data[0]
+        rows = data[1:]
+        results = []
+        for row in rows:
+            row_data = dict(zip(headers, row))
+            snippet = ", ".join(f"{k}: {v}" for k, v in row_data.items() if k not in ["key", "for", "in", "state", "county"])
+            results.append({
+                "title": f"Census ACS: {row_data.get('NAME', for_geo)}",
+                "url": str(r.url),
+                "snippet": snippet,
+                "data": row_data
+            })
+        return results
+    except Exception as e:
+        logger.error(f"Census request error: {e}")
         return [{"error": str(e), "source": "CENSUS", "status": "failed"}]
-    except json.JSONDecodeError:
-        logger.error("Census returned non-JSON response: %s", r.text[:200])
-        return [{"error": "Census API returned invalid JSON", "source": "CENSUS", "status": "failed"}]
 
+async def keyword_search_datagov(keyword_query: str) -> List[Dict[str, str]]:
+    """
+    Searches Data.gov for datasets, reports, and articles. 
+    Use for specific agency budgets, reports, or general topics.
+    """
+    if not keyword_query: return []
+    url = "https://catalog.data.gov/api/3/action/package_search"
+    params = {"q": keyword_query, "rows": 3}
+    try:
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            r = await client.get(url, params=params)
+            r.raise_for_status()
+            results = r.json().get("result", {}).get("results", [])
+            out = []
+            for item in results:
+                dataset_page = f"https://catalog.data.gov/dataset/{item.get('name')}"
+                snippet = (item.get("notes") or "")[:300]
+                org = item.get("organization", {}).get("title", "Unknown Organization")
+                out.append({
+                    "title": f"Data.gov: {item.get('title')} ({org})",
+                    "url": dataset_page,
+                    "snippet": snippet
+                })
+            return out
+    except Exception as e:
+        logger.error(f"Data.gov request error: {e}")
+        return [{"error": str(e), "source": "DATA.GOV", "status": "failed"}]
 
-async def query_congress(keyword_query: str) -> List[Dict[str, Any]]:
-    if not CONGRESS_API_KEY: return [{"error": "CONGRESS_API_KEY missing", "source": "CONGRESS", "status": "failed"}]
+async def keyword_search_congress(keyword_query: str) -> List[Dict[str, Any]]:
+    """
+    Searches Congress.gov for bills. Use for claims about legislation.
+    """
+    if not CONGRESS_API_KEY: 
+        return [{"error": "CONGRESS_API_KEY missing", "source": "CONGRESS", "status": "failed"}]
     if not keyword_query: return []
     params = {"api_key": CONGRESS_API_KEY, "q": keyword_query, "limit": 3}
     url = "https://api.congress.gov/v3/bill"
@@ -524,321 +269,212 @@ async def query_congress(keyword_query: str) -> List[Dict[str, Any]]:
             bills = r.json().get("bills", [])
             results = []
             for bill in bills:
-                url_obj = bill.get("url")
-                url_str = url_obj.get("url") if isinstance(url_obj, dict) else str(url_obj or "")
                 results.append({
                     "title": f"Congress Bill: {bill.get('title')}",
-                    "url": url_str,
+                    "url": bill.get("url", {}).get("url", ""),
                     "snippet": f"Latest Action: {bill.get('latestAction', {}).get('text')}"
                 })
             return results
-    except httpx.HTTPStatusError as e:
-        logger.error("Congress HTTP error %s: %s", e.response.status_code, e.response.text)
-        return [{"error": f"Congress API error: {e.response.status_code}", "source": "CONGRESS", "status": "failed"}]
-    except httpx.RequestError as e:
-        logger.error("Congress request error: %s", str(e))
+    except Exception as e:
+        logger.error(f"Congress request error: {e}")
         return [{"error": str(e), "source": "CONGRESS", "status": "failed"}]
 
-
-async def query_datagov(keyword_query: str) -> List[Dict[str, str]]:
-    if not keyword_query: return []
-    url = "https://catalog.data.gov/api/3/action/package_search"
-    params = {"q": keyword_query, "rows": 5}
-    try:
-        async with httpx.AsyncClient(timeout=20.0) as client:
-            r = await client.get(url, params=params)
-            r.raise_for_status()
-            results = r.json().get("result", {}).get("results", [])
-            out = []
-            for item in results:
-                resources = item.get("resources") or []
-                url_obj = resources[0].get("url") if resources else None
-                resource_url = None
-                if isinstance(url_obj, dict): resource_url = url_obj.get("url")
-                elif url_obj: resource_url = str(url_obj)
-                dataset_page = f"https://catalog.data.gov/dataset/{item.get('name')}" if item.get("name") else None
-                final_url = resource_url if resource_url and resource_url.startswith("http") else dataset_page
-                out.append({
-                    "title": f"Data.gov: {item.get('title')}",
-                    "url": final_url,
-                    "snippet": (item.get("notes") or "")[:300]
-                })
-            return out
-    except httpx.HTTPStatusError as e:
-        logger.error("Data.gov HTTP error %s: %s", e.response.status_code, e.response.text)
-        return [{"error": f"Data.gov API error: {e.response.status_code}", "source": "DATA.GOV", "status": "failed"}]
-    except httpx.RequestError as e:
-        logger.error("Data.gov request error: %s", str(e))
-        return [{"error": str(e), "source": "DATA.GOV", "status": "failed"}]
-
-async def execute_query_plan(plan: Dict[str, Any], claim_type: str) -> List[Dict[str, Any]]:
-    """Executes API calls based on the plan."""
-    tier1 = plan.get("tier1_params", {}) or {}
-    tier2_kws = plan.get("tier2_keywords", []) or []
-    sources = pick_sources_from_type(claim_type)
-    tasks = []
-
-    if "BEA" in sources and tier1.get("bea"):
-        bea_base = tier1["bea"]
-        table = bea_base.get("TableName")
-        if table and table in BEA_VALID_TABLES:
-            line_codes = bea_base.get("LineCode")
-            codes_to_run = []
-            if isinstance(line_codes, list): codes_to_run = line_codes
-            elif line_codes: codes_to_run = [line_codes]
-
-            for code in codes_to_run:
-                digits = re.findall(r"\d+", str(code))
-                if digits:
-                    params = bea_base.copy()
-                    params["LineCode"] = digits[0]
-                    tasks.append(query_bea(params))
-                else: logger.warning("Skipping invalid BEA LineCode: %s", code)
-        else: logger.warning("BEA table invalid/missing: %s", table)
-
-    if "CENSUS" in sources and tier1.get("census_acs"):
-        tasks.append(query_census_acs(params=tier1["census_acs"]))
-    
-    if "BLS" in sources and tier1.get("bls"):
-        tasks.append(query_bls(params=tier1["bls"]))
-    
-    for kw in tier2_kws:
-        if "DATA.GOV" in sources: tasks.append(query_datagov(kw))
-        if "CONGRESS" in sources: tasks.append(query_congress(keyword_query=kw))
-
-    if not tasks: return []
-    results = await asyncio.gather(*tasks)
-    return [item for sublist in results if sublist for item in sublist]
-
-async def synthesize_finding_with_llm(
-    claim: str, claim_analysis: Dict[str, Any], sources: List[Dict[str, Any]]
-) -> Dict[str, Any]:
-    """Uses LLM to analyze evidence against the claim and determine verdict."""
-    default_response = {
-        "verdict": "Inconclusive",
-        "summary": "Could not determine outcome based on available data.",
-        "justification": "No supporting government data was found or the analysis failed.",
-        "evidence_links": [],
+TOOL_DEFINITIONS = [
+    {
+        "name": "query_bea",
+        "description": "Queries BEA NIPA tables. Use for broad *economic functions* (e.g., 'total defense spending'), not specific *agency budgets*.",
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "TableName": {"type": "STRING", "description": "BEA Table ID, e.g., 'T31600' for federal spending by function."},
+                "Year": {"type": "STRING", "description": "The year, e.g., '2023'"},
+                "LineCode": {"type": "STRING", "description": "The specific LineCode for the data, e.g., '2' for National Defense in T31600."},
+            },
+            "required": ["TableName", "Year", "LineCode"]
+        }
+    },
+    {
+        "name": "query_census_acs",
+        "description": "Queries Census ACS data. Use for demographic data (population, income, etc.).",
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "year": {"type": "STRING", "description": "The data year, e.g., '2022'"},
+                "dataset": {"type": "STRING", "description": "The dataset path, e.g., 'acs/acs1/profile'"},
+                "get_vars": {"type": "STRING", "description": "Comma-separated variables, e.g., 'NAME,DP05_0001E'"},
+                "for_geo": {"type": "STRING", "description": "The geography, e.g., 'state:01' for Alabama."},
+            },
+            "required": ["year", "dataset", "get_vars", "for_geo"]
+        }
+    },
+    {
+        "name": "keyword_search_datagov",
+        "description": "Searches Data.gov. Use for specific *agency budgets*, reports, press releases, or topics not in BEA/Census.",
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "keyword_query": {"type": "STRING", "description": "The search query, e.g., 'Department of Education budget 2023'"}
+            },
+            "required": ["keyword_query"]
+        }
+    },
+    {
+        "name": "keyword_search_congress",
+        "description": "Searches Congress.gov for bills. Use only for claims about legislation.",
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "keyword_query": {"type": "STRING", "description": "The search query, e.g., 'CHIPS and Science Act 2022'"}
+            },
+            "required": ["keyword_query"]
+        }
     }
+]
 
-    valid_sources = [s for s in sources if s and "error" not in s]
-    if not valid_sources:
-        return default_response
+AVAILABLE_TOOLS = {
+    "query_bea": query_bea,
+    "query_census_acs": query_census_acs,
+    "keyword_search_datagov": keyword_search_datagov,
+    "keyword_search_congress": keyword_search_congress,
+}
 
-    context_parts = []
-    for s in valid_sources:
-        part = f"Source Title: {s.get('title', 'N/A')}\nURL: {s.get('url', 'N/A')}\n"
-        
-        if "apps.bea.gov" in s.get("url", "") and s.get("data_value") is not None:
-            part += (f"Data Point: {s.get('line_description')} ({s.get('line_code')}) "
-                     f"= {s.get('raw_data_value')} {s.get('unit') or ''} "
-                     f"(Multiplier: {s.get('unit_multiplier')})\n")
-        elif "api.census.gov" in s.get("url", "") and s.get("data_value") is not None:
-             part += (f"Data Point: {s.get('title', 'Census Data')} "
-                      f"= {s.get('raw_data_value')}\n")
-            
-        part += f"Snippet: {s.get('snippet', 'N/A')}"
-        context_parts.append(part)
-
-    context = "\n---\n".join(context_parts)
-
-    prompt = f"""
-    You are an objective fact-checker. Analyze the provided evidence from U.S. government sources against the user's claim.
+async def execute_tool_call(tool_call: Dict[str, Any]) -> str:
+    """Executes a tool call from the LLM and returns a JSON string of the result."""
+    func_name = tool_call.get("name")
+    func_args = tool_call.get("args", {})
     
-    USER'S CLAIM: '''{claim}'''
-    Claim Analysis:
-    - Normalized: {claim_analysis.get('claim_normalized', claim)}
-    - Type: {claim_analysis.get('claim_type', 'Unknown')}
-    - Entities: {claim_analysis.get('entities', [])}
-    - Asserted Relationship: {claim_analysis.get('relationship', 'Unknown')}
-    
-    AVAILABLE EVIDENCE:
-    {context}
-    
-    INSTRUCTIONS:
-    1.  Carefully review the user's claim and its asserted relationship between entities.
-    2.  Examine ALL evidence provided. Look for data points (like from BEA, Census, or BLS) directly relevant to the claim's entities and timeframe.
-    3.  For BEA data, apply the 'Multiplier' (e.g., a 'DataValue' of 1000 and 'UnitMultiplier' of 1000000 means 100,000,000,000).
-    4.  For Census data, use the provided 'Data Point' values.
-    **5.  For BLS data, use the 'Data Point' which represents a calculated percentage (e.g., 3.5 for 3.5%). The snippet will clarify the metric (e.g., "CPI inflation rate" or "unemployment rate").**
-    6.  Compare the relevant findings from the evidence to the claim's assertion.
-    7.  Determine the final `verdict`:
-        - "Supported": If the evidence *clearly and directly* supports the claim's assertion.
-        - "Contradicted": If the evidence *clearly and directly* contradicts the claim's assertion.
-        - "Inconclusive": If the evidence is missing, insufficient, ambiguous, or irrelevant to make a clear judgment.
-    8.  Write a concise `summary` (1 sentence) stating the final conclusion based on the evidence.
-    9.  Write a brief `justification` (1-2 sentences) explaining *why* you reached that verdict, citing specific data points.
-    10. Create `evidence_links` (list of {{"finding": "...", "source_url": "..."}}) linking key data to their source URLs. **You must be extremely careful to match each finding to the *exact* source_url it came from in the evidence context.**
-    
-    Return ONLY a single valid JSON object with keys: "verdict", "summary", "justification", "evidence_links".
-    Example Response:
-    {{
-      "verdict": "Contradicted",
-      "summary": "The data contradicts the claim that federal defense spending was less than education spending in 2023.",
-      "justification": "BEA data for 2023 shows National Defense spending (LineCode 2) was $XXX billion, while Education spending (LineCode 14) was $YYY billion. Since XXX > YYY, the claim is contradicted.",
-      "evidence_links": [
-        {{"finding": "National Defense Spending 2023 = $XXX billion", "source_url": "https://apps.bea.gov/api/data?..."}},
-        {{"finding": "Education Spending 2023 = $YYY billion", "source_url": "https://apps.bea.gov/api/data?..."}}
-      ]
-    }}
-    """
-    try:
-        res = await call_gemini(prompt)
-        parsed = extract_json_block(res.get("text", ""))
-        if parsed and all(k in parsed for k in ["verdict", "summary", "justification", "evidence_links"]):
-            if parsed["verdict"] not in ["Supported", "Contradicted", "Inconclusive"]:
-                logger.warning("LLM returned invalid verdict: %s. Defaulting to Inconclusive.", parsed["verdict"])
-                parsed["verdict"] = "Inconclusive"
-            return parsed
-        else:
-            logger.error("Failed to parse valid synthesis JSON from LLM.")
-            return default_response
-    except HTTPException as e:
-        logger.error("LLM failed during synthesis: %s", getattr(e, "detail", str(e)))
-        default_response["justification"] += " (LLM call failed.)"
-        return default_response
-    except Exception:
-        logger.exception("Unexpected error during LLM synthesis.")
-        default_response["justification"] += " (Unexpected analysis error.)"
-        return default_response
-
-async def compute_confidence(sources: List[Dict[str, Any]], verdict: str, claim: str) -> Dict[str, Any]:
-    """
-    Calculates confidence score based on source reliability (R), 
-    evidence density (E), and semantic alignment (S) using API embeddings.
-    """
-    valid_sources = [s for s in sources if s and "error" not in s]
-    
-    if not valid_sources:
-        return {"confidence": 0.3, "R": 0.5, "E": 0.0, "S": 0.3} 
-        
-    total_weight = 0.0
-    for s in valid_sources:
-        url = (s.get("url") or "").lower()
-        if "apps.bea.gov" in url: weight = 1.0
-        elif "api.census.gov" in url: weight = 1.0
-        elif "api.bls.gov" in url: weight = 1.0
-        elif "api.congress.gov" in url: weight = 0.8
-        elif "catalog.data.gov" in url: weight = 0.7
-        else: weight = 0.6
-        total_weight += weight
-    
-    R = round(total_weight / len(valid_sources), 2)
-    E = round(min(1.0, len(valid_sources) / 5.0), 2)
-    S_llm_verdict = 0.5 
-    if verdict == "Supported": S_llm_verdict = 0.95
-    elif verdict == "Contradicted": S_llm_verdict = 0.90
-    S_semantic_sim = 0.0
+    if func_name not in AVAILABLE_TOOLS:
+        return json.dumps({"error": f"Unknown tool: {func_name}"})
     
     try:
-        evidence_texts = []
-        for s in valid_sources:
-            evidence_texts.append(s.get('snippet', ''))
-            evidence_texts.append(s.get('title', ''))
-            if s.get('data_value') is not None:
-                evidence_texts.append(f"{s.get('line_description', '')} is {s.get('raw_data_value')}")
+        func_to_call = AVAILABLE_TOOLS[func_name]
         
-        evidence_texts = [t for t in evidence_texts if t and isinstance(t, str)]
-
-        if evidence_texts:
-            claim_embedding = await get_embedding_api(claim)
-            
-            evidence_tasks = [get_embedding_api(text) for text in evidence_texts]
-            evidence_embeddings = await asyncio.gather(*evidence_tasks)
-            
-            valid_embeddings = [emb for emb in evidence_embeddings if emb]
-            
-            if claim_embedding and valid_embeddings:
-                similarities = [cosine_similarity(claim_embedding, emb) for emb in valid_embeddings]
-                S_semantic_sim = round(float(max(similarities)), 2)
-            else:
-                S_semantic_sim = 0.3
-
+        result = await func_to_call(**func_args)
+        return json.dumps(result)
     except Exception as e:
-        logger.error("Error during semantic similarity API calculation: %s", e)
-        S_semantic_sim = 0.3 
-    
-    S = round((S_llm_verdict * 0.7) + (S_semantic_sim * 0.3), 2)
+        logger.error(f"Error executing tool {func_name}: {e}")
+        return json.dumps({"error": str(e)})
 
-    confidence = round((0.5 * R + 0.2 * E + 0.3 * S), 2)
-    
-    return {"confidence": confidence, "R": R, "E": E, "S": S, "S_semantic_sim": S_semantic_sim}
 
 @app.post("/verify")
 async def verify(req: VerifyRequest):
-    """Main endpoint to verify a claim."""
+    """Main endpoint to verify a claim using a reasoning agent."""
     claim = (req.claim or "").strip()
-    if not claim: raise HTTPException(status_code=400, detail="Empty claim.")
+    if not claim: 
+        raise HTTPException(status_code=400, detail="Empty claim.")
 
-    analysis = {}
-    all_results = []
-    synthesis_result = {}
+    conversation_history = [{"role": "user", "parts": [{"text": f"Begin task: Verify the following claim: '''{claim}'''"}]}]
+
+    MAX_TURNS = 5
+    
     try:
-        analysis = await analyze_claim_for_api_plan(claim)
-        claim_norm = analysis.get("claim_normalized", claim)
-        claim_type = analysis.get("claim_type", "Other")
-        api_plan = analysis.get("api_plan", {})
+        for turn in range(MAX_TURNS):
+            prompt = build_agent_prompt(claim, conversation_history)
+            agent_response = await call_gemini(prompt, TOOL_DEFINITIONS)
 
-        all_results = await execute_query_plan(api_plan, claim_type)
-        sources_results = [r for r in all_results if r and "error" not in r]
-        debug_errors = [r for r in all_results if r and "error" in r]
+            if agent_text := agent_response.get("text"):
+                conversation_history.append({"role": "model", "parts": [{"text": agent_text}]})
 
-        synthesis_result = await synthesize_finding_with_llm(claim, analysis, sources_results)
-        verdict = synthesis_result.get("verdict", "Inconclusive")
-        summary_text = f"{synthesis_result.get('summary','')} {synthesis_result.get('justification','')}".strip()
+            if tool_calls := agent_response.get("tool_calls"):
+                tool_call = tool_calls[0] 
+                tool_name = tool_call.get("name")
+                tool_result_str = await execute_tool_call(tool_call)
+                
+                conversation_history.append({"role": "model", "parts": [{"functionCall": tool_call}]})
+                conversation_history.append({
+                    "role": "function",
+                    "parts": [{"functionResponse": {"name": tool_name, "response": {"content": tool_result_str}}}]
+                })
+                logger.info(f"Agent turn {turn}: Called tool {tool_name}, got result: {tool_result_str[:200]}...")
 
-        confidence_data = await compute_confidence(sources_results, verdict, claim_norm)
-        
-        confidence_val = confidence_data["confidence"]
+            elif agent_text:
+                logger.info(f"Agent turn {turn}: Finished with final answer.")
+                final_json = extract_json_block(agent_text)
+                
+                if final_json and "verdict" in final_json:
 
-        if confidence_val > 0.75: confidence_tier = "High"
-        elif confidence_val > 0.5: confidence_tier = "Medium"
-        else: confidence_tier = "Low"
+                    return {
+                        "claim_original": claim,
+                        "claim_normalized": final_json.get("claim_normalized", claim),
+                        "claim_type": final_json.get("claim_type", "Unknown"),
+                        "verdict": final_json.get("verdict", "Inconclusive"),
+                        "confidence": final_json.get("confidence", 0.5),
+                        "confidence_tier": final_json.get("confidence_tier", "Medium"),
+                        "summary": final_json.get("summary", "No summary provided."),
+                        "evidence_links": final_json.get("evidence_links", []),
+                        "debug_log": conversation_history
+                    }
+                else:
+                    # The agent stopped but didn't provide valid JSON.
+                    logger.error("Agent stopped but failed to provide valid JSON.")
+                    raise HTTPException(status_code=500, detail="Agent finished but provided a malformed response.")
 
+        logger.warning(f"Max turns ({MAX_TURNS}) reached for claim: {claim}")
         return {
-            "claim_original": claim,
-            "claim_normalized": claim_norm,
-            "claim_type": claim_type,
-            "verdict": verdict,
-            "confidence": confidence_val,
-            "confidence_tier": confidence_tier,
-            "confidence_breakdown": {
-                "source_reliability": confidence_data["R"],
-                "evidence_density": confidence_data["E"],
-                "semantic_alignment": confidence_data["S"],
-            },
-            "summary": summary_text,
-            "evidence_links": synthesis_result.get("evidence_links", []),
-            "sources": sources_results,
-            "debug_plan": api_plan,
-            "debug_log": debug_errors,
+            "claim_original": claim, "verdict": "Inconclusive", "confidence": 0.2,
+            "confidence_tier": "Low", "summary": "Could not reach a conclusion in the allotted time.",
+            "evidence_links": [], "debug_log": conversation_history
         }
 
     except Exception as e:
-        logger.exception("Unhandled error during /verify processing for claim: %s", claim)
+        logger.exception(f"Unhandled error during agent loop for claim: {claim}")
         return {
-            "claim_original": claim,
-            "claim_normalized": claim,
-            "claim_type": "Other",
-            "verdict": "Error",
-            "confidence": 0.0,
-            "confidence_tier": "Low",
-            "confidence_breakdown": {
-                "R": 0.0,
-                "E": 0.0,
-                "S": 0.0,
-            },
-            "summary": "An unexpected internal error occurred.",
-            "evidence_links": [],
-            "sources": [],
-            "debug_plan": analysis.get("api_plan", {}),
-            "debug_log": [
-                {
-                    "error": f"Unhandled exception: {str(e)}",
-                    "source": "internal",
-                    "status": "failed",
-                }
-            ],
+            "claim_original": claim, "verdict": "Error", "confidence": 0.0,
+            "confidence_tier": "Low", "summary": f"An unexpected internal error occurred: {str(e)}",
+            "evidence_links": [], "debug_log": conversation_history
         }
 
 
+def build_agent_prompt(claim: str, history: List[Dict]) -> str:
+    """Builds the main prompt for the reasoning agent."""
+    
+    history_str = ""
+    for msg in history:
+        role = msg["role"]
+        part = msg["parts"][0]
+        if role == "user":
+            history_str += f"USER:\n{part['text']}\n\n"
+        elif role == "model" and "text" in part:
+            history_str += f"ASSISTANT (Thought):\n{part['text']}\n\n"
+        elif role == "model" and "functionCall" in part:
+            func_call = part['functionCall']
+            history_str += f"ASSISTANT (Action):\nI will call the tool `{func_call['name']}` with arguments: {json.dumps(func_call['args'])}\n\n"
+        elif role == "function":
+            func_resp = part['functionResponse']
+            history_str += f"TOOL (Observation):\nResult from `{func_resp['name']}`:\n{json.loads(func_resp['response']['content'])}\n\n"
+
+    return f"""
+You are a objective, multi-step fact-checker. Your goal is to verify the user's claim using a loop of Thought, Action, and Observation.
+
+**Claim to Verify:** "{claim}"
+
+**Your Process:**
+1.  **Thought:** Analyze the claim and the conversation history. Decide if you have enough information, or if you need to use a tool.
+2.  **Action:** If you need more data, choose *one* tool from the available list to find the *most specific* piece of missing information.
+3.  **Observation:** You will be given the result from the tool.
+4.  **Repeat:** Go back to **Thought**. Analyze the new data. If it's not what you need (e.g., it's a broad category, not a specific agency), *think* about why and choose a *different* tool.
+5.  **Final Answer:** Once you have gathered enough relevant evidence to make a judgment, stop calling tools and provide your final answer *only* in the specified JSON format.
+
+**CRITICAL RULES:**
+-   **BEA vs. Data.gov:** `query_bea` is for *broad economic functions* (e.g., "total spending on defense"). `keyword_search_datagov` is for *specific agency budgets* (e.g., "Department of Defense budget"). Do not confuse them.
+-   **One Tool at a Time:** Call only one tool per turn.
+-   **Analyze Evidence:** Do not just accept data. If `query_bea` gives you data for "National Defense Function" but the claim is for "Department of Defense," you must recognize this mismatch and try `keyword_search_datagov` instead.
+
+**Conversation History:**
+{history_str}
+
+**Your Task:**
+Based on the history, provide your next **Thought** and, if necessary, a **Tool Call**.
+If you have enough information, provide *only* your **Final Answer** in this exact JSON format:
+{{
+  "claim_normalized": "A clear, verifiable statement of the claim.",
+  "claim_type": "quantitative_comparison / quantitative_value / factual / legislative / other",
+  "verdict": "Supported / Contradicted / Inconclusive",
+  "confidence": 0.0,
+  "confidence_tier": "Low / Medium / High",
+  "summary": "A concise summary (1-2 sentences) of the final conclusion.",
+  "evidence_links": [
+    {{"finding": "The key piece of data found.", "source_url": "The URL of the source."}}
+  ]
+}}
+"""

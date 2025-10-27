@@ -289,55 +289,78 @@ def pick_sources_from_type(claim_type: str) -> List[str]:
     return list(sources)
     
 async def query_bea(params: Dict[str, Any]) -> List[Dict[str, Any]]:
-    if not BEA_API_KEY: return [{"error": "BEA_API_KEY missing", "source": "BEA", "status": "failed"}]
+    """Queries BEA API, ensuring results match the requested LineCode."""
+    if not BEA_API_KEY:
+        return [{"error": "BEA_API_KEY missing", "source": "BEA", "status": "failed"}]
+
+    requested_line_code = str(params.get("LineCode", "")).strip()
+    if not requested_line_code:
+         logger.warning("BEA query called without a specific LineCode in params.")
+         return [{"error": "BEA query missing LineCode", "source": "BEA", "status": "failed"}]
+
     final_params = {
-        "UserID": BEA_API_KEY,"method": "GetData","ResultFormat": "json",
+        "UserID": BEA_API_KEY, "method": "GetData", "ResultFormat": "json",
         "DataSetName": params.get("DataSetName"), "TableName": params.get("TableName"),
         "Frequency": params.get("Frequency"), "Year": params.get("Year"),
-        "LineCode": params.get("LineCode"), "GeoFips": params.get("GeoFips"),
+        "LineCode": requested_line_code,
+        "GeoFips": params.get("GeoFips"),
     }
+    api_params = {k: v for k, v in final_params.items() if v is not None}
     url = "https://apps.bea.gov/api/data"
+
     try:
         async with httpx.AsyncClient(timeout=20.0) as client:
-            r = await client.get(url, params={k: v for k, v in final_params.items() if v is not None})
+            r = await client.get(url, params=api_params)
             r.raise_for_status()
             payload = r.json()
+            request_url = str(r.url)
     except httpx.HTTPStatusError as e:
         logger.error("BEA HTTP error %s: %s", e.response.status_code, e.response.text)
         return [{"error": f"BEA API error: {e.response.status_code}", "source": "BEA", "status": "failed"}]
     except httpx.RequestError as e:
         logger.error("BEA request error: %s", str(e))
         return [{"error": str(e), "source": "BEA", "status": "failed"}]
+    except json.JSONDecodeError:
+         logger.error("BEA returned non-JSON response: %s", r.text[:200])
+         return [{"error": "BEA API returned invalid JSON", "source": "BEA", "status": "failed"}]
 
-    results = payload.get("BEAAPI", {}).get("Results", {}).get("Data", [])
+
+    results_data = payload.get("BEAAPI", {}).get("Results", {}).get("Data", [])
     out: List[Dict[str, Any]] = []
-    if not results:
-        logger.info("BEA returned no rows for params: %s", {k:v for k,v in final_params.items() if v is not None})
+    if not results_data:
+        logger.info("BEA returned no data rows for params: %s", api_params)
         return []
 
-    for item in results:
-        line_code_resp = item.get("LineCode") or item.get("SeriesCode") or final_params.get("LineCode")
+    for item in results_data:
+        returned_line_code = item.get("LineCode") or item.get("SeriesCode")
+        if str(returned_line_code) != requested_line_code:
+            continue
+
         desc = item.get("LineDescription") or item.get("SeriesDescription") or "Data"
         data_value_raw = item.get("DataValue") or ""
         numeric = _parse_numeric_value(data_value_raw)
         unit = item.get("Unit") or ""
         unit_multiplier = item.get("UnitMultiplier")
         time_period = item.get("TimePeriod") or final_params.get("Year")
-        snippet = f"{desc} ({line_code_resp}) for {time_period}: {data_value_raw}{' '+unit if unit else ''}."
+        snippet = f"{desc} ({returned_line_code}) for {time_period}: {data_value_raw}{' '+unit if unit else ''}."
 
         out.append({
             "title": f"BEA: {params.get('DataSetName')}/{params.get('TableName')}",
-            "url": str(r.url),
+            "url": request_url,
             "snippet": snippet,
             "data_value": numeric,
             "raw_data_value": data_value_raw,
             "unit": unit,
             "unit_multiplier": unit_multiplier,
             "line_description": desc,
-            "line_code": str(line_code_resp) if line_code_resp is not None else None,
+            "line_code": str(returned_line_code) if returned_line_code is not None else None,
             "raw_year": item.get("TimePeriod"),
             "raw_geo": item.get("GeoFips"),
         })
+
+    if not out:
+         logger.info("BEA returned data, but no rows matched requested LineCode %s in params %s", requested_line_code, api_params)
+
     return out
 
 async def query_bls(params: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -875,5 +898,6 @@ async def verify(req: VerifyRequest):
                 }
             ],
         }
+
 
 

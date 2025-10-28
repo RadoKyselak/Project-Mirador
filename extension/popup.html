@@ -1,91 +1,21 @@
 <!doctype html>
 <html>
-<head>
+  <head>
     <meta charset="utf-8"/>
-    <title>Project Mirador</title>
+    <title>Stelthar</title>
     <style>
-        body {
-            font-family: 'Courier New', Courier, monospace;
-            background-color: #f0eadd;
-            color: #1a1a1a;
-            font-size: 14px;
-            width: 360px;
-            padding: 15px;
-            box-sizing: border-box;
-        }
-
-        #verifyBtn {
-            margin-bottom: 15px;
-            padding: 8px 12px;
-            cursor: pointer;
-            font-family: 'Courier New', Courier, monospace;
-            background-color: #f0eadd;
-            border: 2px solid #1a1a1a;
-            color: #1a1a1a;
-        }
-
-        #claim {
-            font-size: 14px;
-            line-height: 1.4;
-            border: 2px solid #1a1a1a;
-            padding: 10px;
-            margin-bottom: 15px;
-        }
-        
-        #result {
-            margin-top: 10px;
-        }
-
-        .verdict {
-            font-weight: bold;
-            font-size: 16px;
-            margin-top: 8px;
-            border: 2px solid #1a1a1a;
-            padding: 10px;
-            margin-bottom: 15px;
-        }
-
-        .verdict.contradicted {
-            color: #CC0000;
-        }
-        .verdict.supported {
-            color: #008000;
-        }
-        .verdict.inconclusive {
-            color: #FFA500;
-        }
-
-        .source {
-            font-size: 13px;
-            margin-top: 6px;
-            line-height: 1.5;
-            border: 2px solid #1a1a1a;
-            padding: 10px;
-            margin-bottom: 15px;
-        }
-
-        .source a {
-            color: #0000EE;
-            text-decoration: none;
-            display: block;
-            margin-top: 3px;
-            word-break: break-all;
-        }
-        .source a:hover {
-            text-decoration: underline;
-        }
-
-        .spinner {
-            display: inline-block;
-        }
+      body { font-family: Arial, sans-serif; width:360px; padding:10px; }
+      #claim { font-size: 13px; margin-bottom:8px; }
+      .verdict { font-weight:700; margin-top:8px; }
+      .source { font-size:12px; margin-top:6px; }
+      .spinner { display:inline-block; }
     </style>
-</head>
-<body>
+  </head>
+  <body>
     <div id="claim">No claim detected. Highlight text on a page and click "Verify".</div>
     <button id="verifyBtn">Verify highlighted claim</button>
-    
-    <div id="result"></div>
+    <div id="result" style="margin-top:10px;"></div>
 
     <script src="popup.js"></script>
-</body>
+  </body>
 </html>

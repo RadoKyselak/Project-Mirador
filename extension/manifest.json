@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Project Mirador",
-  "version": "1.5.1",
+  "version": "1.5.2",
   "description": "Highlight text and verify claims using official government data.",
   "content_security_policy": {
     "extension_pages": "script-src 'self'; object-src 'self'; img-src 'self' https://media4.giphy.com;"
@@ -29,5 +29,6 @@
     "128": "icons/icon128.png"
   }
 }
+
 
 

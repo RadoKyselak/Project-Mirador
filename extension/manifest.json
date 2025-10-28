@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
-  "name": "Stelthar — Civic Fact Check",
-  "version": "1.0",
+  "name": "Project Mirador",
+  "version": "1.5.1",
   "description": "Highlight text and verify claims using official government APIs.",
   "permissions": ["scripting", "activeTab", "storage"],
   "host_permissions": ["<all_urls>"],
@@ -10,7 +10,7 @@
   },
   "action": {
     "default_popup": "popup.html",
-    "default_title": "Stelthar"
+    "default_title": "Project Mirador"
   },
   "content_scripts": [
     {

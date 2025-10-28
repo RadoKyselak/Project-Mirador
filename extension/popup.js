@@ -1,6 +1,4 @@
-
 const BACKEND_URL = "https://stelthar-api.vercel.app/verify";
-
 const LOADING_GIF_URL = "https://media4.giphy.com/media/v1.Y2lkPTc5MGI3NjExeWNjeHhsZHE2b2s0djI5dzRwYXZwOXhuanhob2ljN29sM3Z4dmJkeSZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/3o85xCVo1diTHyIoPC/giphy.gif";
 
 document.addEventListener("DOMContentLoaded", () => {
@@ -24,23 +22,18 @@ document.addEventListener("DOMContentLoaded", () => {
 
     const clearResults = () => {
         resultsArea.style.display = 'none';
+        errorMessageEl.style.display = 'none';
         errorMessageEl.textContent = '';
-        verdictTextEl.textContent = '';
-        verdictTextEl.className = '';
-        confidenceTextEl.textContent = '';
-        reliabilityEl.textContent = '';
-        densityEl.textContent = '';
-        alignmentEl.textContent = '';
-        summaryTextEl.textContent = '';
-        evidenceListEl.innerHTML = '';
     };
 
     chrome.storage.local.get(["stelthar_last_claim"], (data) => {
         const claim = data.stelthar_last_claim;
+        console.log("Popup loaded. Claim from storage:", claim);
         if (claim) {
-            claimTextEl.textContent = `"${claim}"`
+            claimTextEl.textContent = `"${claim}"`;
+            verifyBtn.disabled = false;
         } else {
-            claimTextEl.textContent = "No claim detected. Highlight text on a page and right-click or use the popup button.";
+            claimTextEl.textContent = "No claim detected. Highlight text on a page first, then click the 'Verify' button that appears.";
             verifyBtn.disabled = true;
         }
     });
@@ -49,15 +42,17 @@ document.addEventListener("DOMContentLoaded", () => {
         clearResults();
         loadingIndicator.style.display = 'block';
         verifyBtn.disabled = true;
-        errorMessageEl.textContent = '';
 
         chrome.storage.local.get(["stelthar_last_claim"], async (data) => {
             const claim = data.stelthar_last_claim;
             if (!claim) {
-                errorMessageEl.textContent = "No claim found. Highlight text first.";
+                errorMessageEl.textContent = "No claim found in storage. Highlight text first.";
+                errorMessageEl.style.display = 'block';
                 loadingIndicator.style.display = 'none';
                 return;
             }
+
+            console.log("Verifying claim:", claim);
 
             try {
                 const resp = await fetch(BACKEND_URL, {
@@ -67,14 +62,22 @@ document.addEventListener("DOMContentLoaded", () => {
                 });
 
                 if (!resp.ok) {
-                    throw new Error(`Backend error: ${resp.status} ${resp.statusText}`);
+                    let errorDetail = resp.statusText;
+                    try {
+                        const errorJson = await resp.json();
+                        errorDetail = errorJson.detail || errorDetail;
+                    } catch (e) {}
+                    throw new Error(`Backend error: ${resp.status} ${errorDetail}`);
                 }
 
                 const j = await resp.json();
-                console.log("API Response:", j);
+                console.log("API Response Received:", j);
 
                 verdictTextEl.textContent = `VERDICT: ${j.verdict || 'N/A'}`;
-                verdictTextEl.className = (j.verdict || '').toLowerCase();
+                verdictTextEl.className = '';
+                if (j.verdict) {
+                    verdictTextEl.classList.add((j.verdict).toLowerCase());
+                }
 
                 confidenceTextEl.textContent = `CONFIDENCE: ${j.confidence?.toFixed(2) || 'N/A'} (${j.confidence_tier || 'N/A'})`;
 
@@ -88,8 +91,10 @@ document.addEventListener("DOMContentLoaded", () => {
                 if (j.evidence_links && j.evidence_links.length > 0) {
                     j.evidence_links.forEach(link => {
                         const li = document.createElement('li');
-                        const findingText = link.finding || 'Link';
-                        li.textContent = `• ${findingText}`;
+                        const findingSpan = document.createElement('span');
+                        findingSpan.className = 'finding';
+                        findingSpan.textContent = `• ${link.finding || 'Link'}`;
+                        li.appendChild(findingSpan);
 
                         if (link.source_url) {
                             const a = document.createElement('a');
@@ -101,14 +106,15 @@ document.addEventListener("DOMContentLoaded", () => {
                         evidenceListEl.appendChild(li);
                     });
                 } else {
-                    evidenceListEl.innerHTML = '<li>No specific evidence links provided.</li>';
+                    evidenceListEl.innerHTML = '<li>No specific evidence links found for this verdict.</li>';
                 }
 
                 resultsArea.style.display = 'block';
 
             } catch (e) {
-                console.error("Verification error:", e);
-                errorMessageEl.textContent = `Error: ${e.message}`;
+                console.error("Verification process error:", e);
+                errorMessageEl.textContent = `Error during verification: ${e.message}`;
+                errorMessageEl.style.display = 'block';
             } finally {
                 loadingIndicator.style.display = 'none';
                 verifyBtn.disabled = false;

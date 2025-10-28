@@ -2,7 +2,11 @@
   "manifest_version": 3,
   "name": "Project Mirador",
   "version": "1.5.1",
-  "description": "Highlight text and verify claims using official government APIs.",
+  "description": "Highlight text and verify claims using official government data.",
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'; img-src 'self' https://media4.giphy.com;"
+  },
+  "permissions": ["scripting", "activeTab", "storage"],
   "permissions": ["scripting", "activeTab", "storage"],
   "host_permissions": ["<all_urls>"],
   "background": {
@@ -12,6 +16,7 @@
     "default_popup": "popup.html",
     "default_title": "Project Mirador"
   },
+  
   "content_scripts": [
     {
       "matches": ["<all_urls>"],
@@ -24,4 +29,5 @@
     "128": "icons/icon128.png"
   }
 }
+
 

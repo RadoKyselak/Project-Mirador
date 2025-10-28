@@ -2,138 +2,90 @@
 <html>
 <head>
     <meta charset="utf-8"/>
-    <title>Project Miradoor</title>
+    <title>Project Mirador</title>
     <style>
         body {
             font-family: 'Courier New', Courier, monospace;
-            max-width: 300px;
-            padding: 15px;
             background-color: #f0eadd;
             color: #1a1a1a;
             font-size: 14px;
+            width: 360px;
+            padding: 15px;
+            box-sizing: border-box;
         }
-        button {
+
+        #verifyBtn {
             margin-bottom: 15px;
             padding: 8px 12px;
             cursor: pointer;
+            font-family: 'Courier New', Courier, monospace;
+            background-color: #f0eadd;
+            border: 2px solid #1a1a1a;
+            color: #1a1a1a;
         }
-        .section {
+
+        #claim {
+            font-size: 14px;
+            line-height: 1.4;
             border: 2px solid #1a1a1a;
             padding: 10px;
             margin-bottom: 15px;
         }
-        .section-title {
-            font-weight: bold;
-            text-transform: uppercase;
-            margin-bottom: 8px;
-            font-size: 13px;
-            letter-spacing: 1px;
+        
+        #result {
+            margin-top: 10px;
         }
-        #claim-text {
-            font-size: 14px;
-            line-height: 1.4;
-        }
-        #verdict-text {
+
+        .verdict {
             font-weight: bold;
             font-size: 16px;
+            margin-top: 8px;
+            border: 2px solid #1a1a1a;
+            padding: 10px;
+            margin-bottom: 15px;
         }
-        #verdict-text.contradicted {
+
+        .verdict.contradicted {
             color: #CC0000;
         }
-        #verdict-text.supported {
+        .verdict.supported {
             color: #008000;
         }
-        #verdict-text.inconclusive {
+        .verdict.inconclusive {
             color: #FFA500;
         }
-        #confidence-text {
-            font-weight: bold;
-            font-size: 15px;
-            margin-top: 5px;
-        }
-        #confidence-breakdown {
+
+        .source {
             font-size: 13px;
-            margin-top: 8px;
-            padding-left: 10px;
+            margin-top: 6px;
             line-height: 1.5;
+            border: 2px solid #1a1a1a;
+            padding: 10px;
+            margin-bottom: 15px;
         }
-         #summary-text {
-            font-size: 14px;
-            line-height: 1.4;
-        }
-        #evidence-list {
-            list-style: none;
-            padding-left: 0;
-            font-size: 13px;
-        }
-        #evidence-list li {
-            margin-bottom: 10px;
-        }
-        #evidence-list a {
+
+        .source a {
             color: #0000EE;
-            text-decoration: none; /* Remove underline */
+            text-decoration: none;
             display: block;
             margin-top: 3px;
             word-break: break-all;
         }
-         #evidence-list a:hover {
+        .source a:hover {
             text-decoration: underline;
         }
-        #loading-indicator {
-            display: none;
-            text-align: center;
-            margin: 20px 0;
-        }
-         #loading-indicator img {
-            width: 40px; /* Can be adjusted */
-            height: 40px;
-        }
-        #error-message {
-            color: #CC0000;
-            margin-top: 10px;
-            font-weight: bold;
-        }
 
+        .spinner {
+            display: inline-block;
+        }
     </style>
 </head>
 <body>
-    <div class="section">
-        <div class="section-title">Claim</div>
-        <div id="claim-text">Loading claim...</div>
-    </div>
-
-    <button id="verifyBtn">Verify Claim</button>
-
-    <div id="loading-indicator">
-        <img src="" alt="Loading..." />
-    </div>
-
-    <div id="results-area" style="display: none;"> <div class="section">
-            <div id="verdict-text"></div>
-            <div id="confidence-text"></div>
-            <div id="confidence-breakdown">
-                <div id="reliability"></div>
-                <div id="density"></div>
-                <div id="alignment"></div>
-            </div>
-        </div>
-
-        <div class="section">
-            <div class="section-title">Summary</div>
-            <div id="summary-text"></div>
-        </div>
-
-        <div class="section">
-            <div class="section-title">Evidence</div>
-            <ul id="evidence-list"></ul>
-        </div>
-    </div>
-
-     <div id="error-message"></div>
+    <div id="claim">No claim detected. Highlight text on a page and click "Verify".</div>
+    <button id="verifyBtn">Verify highlighted claim</button>
+    
+    <div id="result"></div>
 
     <script src="popup.js"></script>
 </body>
 </html>
-
-
-

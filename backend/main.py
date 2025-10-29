@@ -1072,11 +1072,13 @@ async def verify(req: VerifyRequest):
 
         confidence_data = await compute_confidence(sources_results, verdict, claim_norm)
 
-        confidence_val = round(confidence_data.get("confidence", 0.0) * 100)
+        confidence_numeric = round(confidence_data.get("confidence", 0.0) * 100)
 
-        if confidence_val > 75: confidence_tier = "High"
-        elif confidence_val > 50: confidence_tier = "Medium"
+        if confidence_numeric > 75: confidence_tier = "High"
+        elif confidence_numeric > 50: confidence_tier = "Medium"
         else: confidence_tier = "Low"
+        
+        confidence_str = f"{confidence_numeric}%"
 
         end_time = asyncio.get_event_loop().time()
         duration = round(end_time - start_time, 2)
@@ -1087,7 +1089,7 @@ async def verify(req: VerifyRequest):
             "claim_normalized": claim_norm,
             "claim_type": claim_type,
             "verdict": verdict,
-            "confidence": confidence_val,
+            "confidence": confidence_str,
             "confidence_tier": confidence_tier,
             "confidence_breakdown": {
                 "source_reliability": confidence_data.get("R", 0.0),
@@ -1109,7 +1111,7 @@ async def verify(req: VerifyRequest):
             "claim_normalized": analysis.get("claim_normalized", claim),
             "claim_type": analysis.get("claim_type", "Other"),
             "verdict": "Error",
-            "confidence": 0.0,
+            "confidence": "0%",
             "confidence_tier": "Low",
             "confidence_breakdown": { "R": 0.0, "E": 0.0, "S": 0.0 },
             "summary": f"An unexpected internal server error occurred: {type(e).__name__}",
@@ -1122,9 +1124,3 @@ async def verify(req: VerifyRequest):
                 "status": "failed",
             }],
         }
-
-
-
-
-
-

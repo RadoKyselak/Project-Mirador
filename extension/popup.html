@@ -66,7 +66,7 @@
             font-size: 18px;
             margin-bottom: 5px;
         }
-        /* Corrected verdict colors */
+        
         #verdict-text.supported { color: #008000; }
         #verdict-text.contradicted { color: #CC0000; }
         #verdict-text.inconclusive { color: #FFA500; }
@@ -145,8 +145,7 @@
             word-break: break-all;
         }
         #sources-list a:hover { text-decoration: underline; }
-
-        /* Corrected Full-Screen Loader Styles */
+        
         #loading-indicator {
             display: none; 
             position: fixed; 
@@ -156,8 +155,6 @@
             height: 100%;
             background-color: #fdfaf3; 
             z-index: 1000; 
-
-            /* Use Flexbox to center */
             flex-direction: column;
             justify-content: center;
             align-items: center;
@@ -206,9 +203,13 @@
 
     <button id="verifyBtn">Verify Claim</button>
 
-    <div id="loading-indicator">
-        <div class="loading-title">Verifying Claim...</div>
-        <div class="loader"></div>
+    <div id="loading-indicator" style="display: none;">
+        <div class="beacon-loader">
+            <div class="beacon-ring"></div>
+            <div class="beacon-ring"></div>
+            <div class="beacon-ring"></div>
+            <div class="beacon-ring"></div>
+        </div>
     </div>
 
     <div id="results-area" style="display: none;">
@@ -236,3 +237,4 @@
     <script src="popup.js"></script>
 </body>
 </html>
+

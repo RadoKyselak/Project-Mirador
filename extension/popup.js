@@ -1,5 +1,4 @@
 const BACKEND_URL = "https://stelthar-api.vercel.app/verify";
-const LOADING_GIF_URL = "https://media4.giphy.com/media/v1.Y2lkPTc5MGI3NjExeWNjeHhsZHE2b2s0djI5dzRwYXZwOXhuanhob2ljN29sM3Z4dmJkeSZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9Zw/3o85xCVo1diTHyIoPC/giphy.gif"; // Your chosen GIF
 
 document.addEventListener("DOMContentLoaded", () => {
 
@@ -14,11 +13,6 @@ document.addEventListener("DOMContentLoaded", () => {
     const sourcesDropdown = document.getElementById("sources-dropdown");
     const sourcesListEl = document.getElementById("sources-list");
     const errorMessageEl = document.getElementById("error-message");
-
-    const loadingImg = loadingIndicator.querySelector('img');
-    if (loadingImg) {
-        loadingImg.src = LOADING_GIF_URL;
-    }
 
     const clearResults = () => {
         resultsArea.style.display = 'none';
@@ -78,92 +72,68 @@ document.addEventListener("DOMContentLoaded", () => {
                     throw new Error(`Backend error: ${resp.status} ${errorDetail}`);
                 }
 
-                const j = await resp.json();
-                console.log("API Response Received:", j);
+                const jsonResp = await resp.json();
+                console.log("Received response:", jsonResp);
 
-                verdictTextEl.textContent = `VERDICT: ${j.verdict || 'N/A'}`;
-                verdictTextEl.className = '';
-                if (j.verdict) {
-                    verdictTextEl.classList.add((j.verdict).toLowerCase());
-                }
+                loadingIndicator.style.display = 'none';
+                resultsArea.style.display = 'block';
+                verifyBtn.disabled = false;
 
-                const breakdownEl = document.getElementById('confidence-breakdown');
-                if (breakdownEl && j.confidence_breakdown) {
-                    breakdownEl.innerHTML = `
-                        &ndash; Source Reliability: ${j.confidence_breakdown.source_reliability?.toFixed(2) || 'N/A'}<br>
-                        &ndash; Evidence Density: ${j.confidence_breakdown.evidence_density?.toFixed(2) || 'N/A'}<br>
-                        &ndash; Semantic Alignment: ${j.confidence_breakdown.semantic_alignment?.toFixed(2) || 'N/A'}
-                    `;
-                } else if (breakdownEl) {
-                    breakdownEl.innerHTML = '';
-                }
-
-                summaryTextEl.textContent = j.summary || 'No summary provided.';
+                verdictTextEl.textContent = `VERDICT: ${jsonResp.verdict.toUpperCase()}`;
+                verdictTextEl.className = jsonResp.verdict.toLowerCase();
+                confidenceTextEl.textContent = `CONFIDENCE: ${jsonResp.confidence}`;
+                summaryTextEl.textContent = jsonResp.summary;
 
                 evidenceLinksListEl.innerHTML = '';
-                if (j.evidence_links && j.evidence_links.length > 0) {
-                    j.evidence_links.forEach(link => {
+                if (jsonResp.evidence_links && jsonResp.evidence_links.length > 0) {
+                    jsonResp.evidence_links.forEach(link => {
                         const li = document.createElement('li');
-                        const findingSpan = document.createElement('span');
-                        findingSpan.className = 'finding';
-                        findingSpan.textContent = `• ${link.finding || 'Link'}`;
-                        li.appendChild(findingSpan);
-
-                        if (link.source_url) {
-                            const a = document.createElement('a');
-                            a.href = link.source_url;
-                            a.target = "_blank";
-                            a.textContent = link.source_url;
-                            li.appendChild(a);
-                        }
+                        const a = document.createElement('a');
+                        a.href = link;
+                        a.textContent = link;
+                        a.target = '_blank';
+                        li.appendChild(a);
                         evidenceLinksListEl.appendChild(li);
                     });
                 } else {
-                    evidenceLinksListEl.innerHTML = '<li>No specific evidence links found.</li>';
+                    evidenceLinksListEl.innerHTML = '<li>No evidence links provided.</li>';
                 }
 
                 sourcesListEl.innerHTML = '';
-                if (j.sources && j.sources.length > 0) {
-                    j.sources.forEach(source => {
+                if (jsonResp.sources && jsonResp.sources.length > 0) {
+                    sourcesDropdown.style.display = 'block';
+                    jsonResp.sources.forEach(source => {
                         const li = document.createElement('li');
 
                         const titleSpan = document.createElement('span');
                         titleSpan.className = 'source-title';
-                        titleSpan.textContent = source.title || 'Untitled Source';
+                        titleSpan.textContent = source.title;
                         li.appendChild(titleSpan);
 
                         if (source.snippet) {
                             const snippetSpan = document.createElement('span');
                             snippetSpan.className = 'source-snippet';
-                            snippetSpan.textContent = source.snippet.substring(0, 150) + (source.snippet.length > 150 ? '...' : '');
+                            snippetSpan.textContent = `"${source.snippet}"`;
                             li.appendChild(snippetSpan);
                         }
 
-                        if (source.url) {
-                            const a = document.createElement('a');
-                            a.href = source.url;
-                            a.target = "_blank";
-                            a.textContent = "View Source";
-                            li.appendChild(a);
-                        }
+                        const a = document.createElement('a');
+                        a.href = source.url;
+                        a.textContent = source.url;
+                        a.target = '_blank';
+                        li.appendChild(a);
+
                         sourcesListEl.appendChild(li);
                     });
-                    sourcesDropdown.style.display = 'block';
-                } else {
-                    sourcesDropdown.style.display = 'none';
                 }
 
-                resultsArea.style.display = 'block';
-
-            } catch (e) {
-                console.error("Verification process error:", e);
-                errorMessageEl.textContent = `Error during verification: ${e.message}`;
-                errorMessageEl.style.display = 'block';
-            } finally {
+            } catch (error) {
+                console.error("Verification failed:", error);
                 loadingIndicator.style.display = 'none';
+                errorMessageEl.textContent = `Error: ${error.message}`;
+                errorMessageEl.style.display = 'block';
                 verifyBtn.disabled = false;
             }
         });
     };
-}); // End DOMContentLoaded
-
+});

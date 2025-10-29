@@ -40,18 +40,20 @@
             font-size: 14px;
         }
         #verifyBtn {
-            margin-bottom: 15px;
-            padding: 8px 12px;
-            cursor: pointer;
             font-family: 'Courier New', Courier, monospace;
-            background-color: #f0eadd;
-            border: 2px solid #1a1a1a;
-            color: #1a1a1a;
             width: 100%;
+            padding: 10px;
             font-size: 16px;
             font-weight: bold;
+            cursor: pointer;
+            background-color: #4a4a4a;
+            color: white;
+            border: none;
+            border-radius: 0px;
+            margin-bottom: 15px;
+            transition: background-color 0.2s;
         }
-        #verifyBtn:hover:not(:disabled) { background-color: #e6e0cf; }
+        #verifyBtn:hover:not(:disabled) { background-color: #333; }
         #verifyBtn:disabled {
             background-color: #ccc;
             cursor: not-allowed;
@@ -150,7 +152,9 @@
             justify-content: center;
             align-items: center;
             height: 40px;
+            /* display: none;  -- handled inline in HTML */
         }
+        /* --- Beacon Loader Styles --- */
         .beacon-loader {
             position: relative;
             width: 40px;

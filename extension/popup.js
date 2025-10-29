@@ -87,7 +87,16 @@ document.addEventListener("DOMContentLoaded", () => {
                     verdictTextEl.classList.add((j.verdict).toLowerCase());
                 }
 
-                confidenceTextEl.textContent = `CONFIDENCE: ${j.confidence?.toFixed(2) || 'N/A'} (${j.confidence_tier || 'N/A'})`;
+                const breakdownEl = document.getElementById('confidence-breakdown');
+                if (breakdownEl && j.confidence_breakdown) {
+                    breakdownEl.innerHTML = `
+                        &ndash; Source Reliability: ${j.confidence_breakdown.source_reliability?.toFixed(2) || 'N/A'}<br>
+                        &ndash; Evidence Density: ${j.confidence_breakdown.evidence_density?.toFixed(2) || 'N/A'}<br>
+                        &ndash; Semantic Alignment: ${j.confidence_breakdown.semantic_alignment?.toFixed(2) || 'N/A'}
+                    `;
+                } else if (breakdownEl) {
+                    breakdownEl.innerHTML = '';
+                }
 
                 summaryTextEl.textContent = j.summary || 'No summary provided.';
 
@@ -157,3 +166,4 @@ document.addEventListener("DOMContentLoaded", () => {
         });
     };
 }); // End DOMContentLoaded
+

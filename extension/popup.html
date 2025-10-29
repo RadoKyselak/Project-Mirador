@@ -1,8 +1,11 @@
-<!DOCTYPE html>
+<!doctype html>
 <html>
 <head>
     <title>Stelthar Verification</title>
     <meta charset="UTF-8">
+
+    <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+
     <style>
         body {
             width: 350px;
@@ -39,25 +42,52 @@
             color: #555;
             font-size: 14px;
         }
+
         #verifyBtn {
-            font-family: 'Courier New', Courier, monospace;
+            font-family: "Press Start 2P", 'Courier New', Courier, monospace;
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
             width: 100%;
-            padding: 10px;
-            font-size: 16px;
-            font-weight: bold;
+            padding: 12px 14px;
+            font-size: 12px;
+            font-weight: normal;
             cursor: pointer;
-            background-color: #4a4a4a;
-            color: white;
+            background: linear-gradient(180deg, #111111, #2b2b2b);
+            color: #ffffff;
             border: none;
-            border-radius: 0px;
+            border-radius: 8px;
             margin-bottom: 15px;
-            transition: background-color 0.2s;
+            transition: transform 120ms ease, box-shadow 120ms ease, background-color 120ms ease;
+            box-shadow: 0 8px 22px rgba(0,0,0,0.45), inset 0 -2px 0 rgba(255,255,255,0.02);
+            text-shadow: 0 1px 0 rgba(0,0,0,0.6);
+            user-select: none;
         }
-        #verifyBtn:hover:not(:disabled) { background-color: #333; }
+
+        #verifyBtn:hover:not(:disabled) {
+            transform: translateY(-2px);
+            background: linear-gradient(180deg, #222222, #111111);
+        }
+        #verifyBtn:active:not(:disabled) {
+            transform: translateY(0);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.45);
+        }
+
         #verifyBtn:disabled {
             background-color: #ccc;
             cursor: not-allowed;
+            color: #666;
+            box-shadow: none;
         }
+
+        #verifyBtn svg {
+            width: 18px;
+            height: 18px;
+            flex: 0 0 auto;
+            fill: currentColor;
+            image-rendering: pixelated;
+        }
+
         #results-area {
             display: none;
         }
@@ -152,9 +182,7 @@
             justify-content: center;
             align-items: center;
             height: 40px;
-            /* display: none;  -- handled inline in HTML */
         }
-        /* --- Beacon Loader Styles --- */
         .beacon-loader {
             position: relative;
             width: 40px;
@@ -211,7 +239,12 @@
         <div id="claim-text">Loading claim...</div>
     </div>
 
-    <button id="verifyBtn">Verify Claim</button>
+    <button id="verifyBtn" aria-label="Verify selected claim">
+        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <path d="M15.5 14h-.79l-.28-.27a6.471 6.471 0 001.48-5.34C15.33 5.61 12.72 3 9.5 3S3.67 5.61 3.67 8.39 6.28 13.78 9.5 13.78c1.61 0 3.09-.59 4.22-1.57l.27.28v.79L17 18.5 18.5 17l-3-3zM9.5 12c-2.49 0-4.5-2.01-4.5-4.5S7.01 3 9.5 3 14 5.01 14 7.5 11.99 12 9.5 12z"/>
+        </svg>
+        <span>Verify with Stelthar</span>
+    </button>
 
     <div id="loading-indicator" style="display: none;">
         <div class="beacon-loader">
@@ -243,7 +276,33 @@
     </div>
 
      <div id="error-message"></div>
-
     <script src="popup.js"></script>
+    <script>
+        (function () {
+            const btn = document.getElementById('verifyBtn');
+            if (!btn) return;
+
+            btn.addEventListener('mousedown', () => {
+                btn.classList.add('pressed');
+            });
+            btn.addEventListener('mouseup', () => {
+                btn.classList.remove('pressed');
+            });
+            btn.addEventListener('mouseleave', () => {
+                btn.classList.remove('pressed');
+            });
+
+            btn.addEventListener('keydown', (e) => {
+                if (e.key === ' ' || e.key === 'Enter') {
+                    btn.classList.add('pressed');
+                }
+            });
+            btn.addEventListener('keyup', (e) => {
+                if (e.key === ' ' || e.key === 'Enter') {
+                    btn.classList.remove('pressed');
+                }
+            });
+        })();
+    </script>
 </body>
 </html>

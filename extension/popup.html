@@ -1,308 +1,161 @@
-<!doctype html>
-<html>
-<head>
-    <title>Stelthar Verification</title>
-    <meta charset="UTF-8">
+const BACKEND_URL = "https://stelthar-api.vercel.app/verify";
 
-    <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+document.addEventListener("DOMContentLoaded", () => {
+    const claimTextEl = document.getElementById("claim-text");
+    const verifyBtn = document.getElementById("verifyBtn");
+    const loadingIndicator = document.getElementById("loading-indicator");
+    const resultsArea = document.getElementById("results-area");
+    const verdictTextEl = document.getElementById("verdict-text");
+    const confidenceTextEl = document.getElementById("confidence-text");
+    const summaryTextEl = document.getElementById("summary-text");
+    const evidenceLinksListEl = document.getElementById("evidence-links-list");
+    const sourcesDropdown = document.getElementById("sources-dropdown");
+    const sourcesListEl = document.getElementById("sources-list");
+    const errorMessageEl = document.getElementById("error-message");
 
-    <style>
-        body {
-            width: 350px;
-            font-family:'Courier New', Courier, monospace;
-            padding: 15px;
-            background-color: #fdfaf3;
-            color: #1a1a1a;
-        }
+    const clearResults = () => {
+        resultsArea.style.display = 'none';
+        sourcesDropdown.style.display = 'none';
+        sourcesDropdown.open = false;
+        errorMessageEl.style.display = 'none';
+        errorMessageEl.textContent = '';
+        verdictTextEl.textContent = 'VERDICT: ...';
+        verdictTextEl.className = '';
+        confidenceTextEl.textContent = 'CONFIDENCE: ...';
+        summaryTextEl.textContent = 'Loading summary...';
+        evidenceLinksListEl.innerHTML = '';
+        sourcesListEl.innerHTML = '';
+    };
 
-        #main-title {
-            font-size: 22px;
-            font-weight: bold;
-            text-align: center;
-            color: #333;
-            margin-bottom: 15px;
-            border-bottom: 2px solid #e0e0e0;
-            padding-bottom: 10px;
-        }
-
-        .section {
-            margin-bottom: 15px;
-            border: 1px solid #e0e0e0;
-            padding: 10px;
-            border-radius: 5px;
-            background-color: #fffaf0;
-        }
-        .section-title {
-            font-weight: bold;
-            margin-bottom: 8px;
-            font-size: 14px;
-            color: #333;
-        }
-        #claim-text {
-            color: #555;
-            font-size: 14px;
-        }
-
-        #verifyBtn {
-            font-family: "Press Start 2P", 'Courier New', Courier, monospace;
-            display: inline-flex;
-            align-items: center;
-            gap: 10px;
-            width: 100%;
-            padding: 12px 14px;
-            font-size: 12px;
-            font-weight: normal;
-            cursor: pointer;
-            background: linear-gradient(180deg, #111111, #2b2b2b);
-            color: #ffffff;
-            border: none;
-            border-radius: 8px;
-            margin-bottom: 15px;
-            transition: transform 120ms ease, box-shadow 120ms ease, background-color 120ms ease;
-            box-shadow: 0 8px 22px rgba(0,0,0,0.45), inset 0 -2px 0 rgba(255,255,255,0.02);
-            text-shadow: 0 1px 0 rgba(0,0,0,0.6);
-            user-select: none;
-        }
-
-        #verifyBtn:hover:not(:disabled) {
-            transform: translateY(-2px);
-            background: linear-gradient(180deg, #222222, #111111);
-        }
-        #verifyBtn:active:not(:disabled) {
-            transform: translateY(0);
-            box-shadow: 0 4px 12px rgba(0,0,0,0.45);
-        }
-
-        #verifyBtn:disabled {
-            background-color: #ccc;
-            cursor: not-allowed;
-            color: #666;
-            box-shadow: none;
-        }
-
-        #verifyBtn svg {
-            width: 18px;
-            height: 18px;
-            flex: 0 0 auto;
-            fill: currentColor;
-            image-rendering: pixelated;
-        }
-
-        #results-area {
-            display: none;
-        }
-        #verdict-text {
-            font-weight: bold;
-            font-size: 18px;
-            margin-bottom: 5px;
-        }
-
-        #verdict-text.supported { color: #008000; }
-        #verdict-text.contradicted { color: #CC0000; }
-        #verdict-text.inconclusive { color: #FFA500; }
-        #verdict-text.error { color: #CC0000; }
-
-        #confidence-text {
-            font-size: 14px;
-            color: #666;
-            margin-bottom: 10px;
-        }
-        #summary-text {
-            font-size: 14px;
-            line-height: 1.5;
-        }
-        #evidence-links-list {
-            list-style: none;
-            padding-left: 0;
-            margin-top: 10px;
-        }
-        #evidence-links-list li {
-            margin-bottom: 5px;
-        }
-        #evidence-links-list a {
-            color: #0000EE;
-            text-decoration: none;
-            font-size: 12px;
-        }
-        #evidence-links-list a:hover { text-decoration: underline; }
-
-        details#sources-dropdown {
-            margin-top: 15px;
-            border: 1px dashed #888;
-            border-radius: 4px;
-            background-color: #f9f5ed;
-        }
-        details#sources-dropdown summary {
-            padding: 8px 10px;
-            font-weight: bold;
-            cursor: pointer;
-            outline: none;
-            font-size: 13px;
-        }
-        details#sources-dropdown summary::marker {
-           color: #1a1a1a;
-        }
-        #sources-list {
-            list-style: none;
-            padding: 0 10px 10px 25px;
-            margin: 0;
-            font-size: 12px;
-            max-height: 200px;
-            overflow-y: auto;
-            border-top: 1px dashed #aaa;
-        }
-        #sources-list li {
-            margin-bottom: 10px;
-            border-bottom: 1px dotted #ccc;
-            padding-bottom: 8px;
-        }
-         #sources-list li span.source-title {
-            display: block;
-            font-weight: bold;
-            color: #1a1a1a;
-         }
-        #sources-list li span.source-snippet {
-            display: block;
-            color: #555;
-            margin-top: 3px;
-            font-style: italic;
-        }
-        #sources-list a {
-            color: #0000EE;
-            text-decoration: none;
-            display: block;
-            margin-top: 3px;
-            word-break: break-all;
-        }
-        #sources-list a:hover { text-decoration: underline; }
-        
-        #loading-indicator {
-            margin: 20px 0;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            height: 40px;
-        }
-        .beacon-loader {
-            position: relative;
-            width: 40px;
-            height: 40px;
-        }
-
-        .beacon-ring {
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            border: 2px solid #007aff;
-            border-radius: 50%;
-            opacity: 0;
-            animation: beacon-pulse 1.5s cubic-bezier(0.0, 0.0, 0.2, 1) infinite;
-        }
-        .beacon-ring:nth-child(1) { animation-delay: 0s; }
-        .beacon-ring:nth-child(2) { animation-delay: 0.3s; }
-        .beacon-ring:nth-child(3) { animation-delay: 0.6s; }
-        .beacon-ring:nth-child(4) { animation-delay: 0.9s; }
-
-        @keyframes beacon-pulse {
-            0% {
-                transform: scale(0.1);
-                opacity: 0;
+    const formatConfidence = (conf) => {
+        if (conf === null || conf === undefined) return 'N/A';
+        if (typeof conf === 'number') {
+            if (conf > 0 && conf <= 1) {
+                return `${Math.round(conf * 100)}%`;
             }
-            50% {
-                opacity: 1;
-            }
-            100% {
-                transform: scale(1);
-                opacity: 0;
-            }
+            return `${Math.round(conf)}%`;
         }
-
-        #error-message {
-            color: #CC0000;
-            margin-top: 10px;
-            font-weight: bold;
-            border: 1px solid #CC0000;
-            background-color: #ffeeee;
-            padding: 8px;
-            display: none;
-            border-radius: 4px;
-        }
-    </style>
-</head>
-<body>
-    <div id="main-title">Project Mirador</div>
-    
-    <div class="section">
-        <div class="section-title">Claim</div>
-        <div id="claim-text">Loading claim...</div>
-    </div>
-
-    <button id="verifyBtn" aria-label="Verify selected claim">
-        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-            <path d="M15.5 14h-.79l-.28-.27a6.471 6.471 0 001.48-5.34C15.33 5.61 12.72 3 9.5 3S3.67 5.61 3.67 8.39 6.28 13.78 9.5 13.78c1.61 0 3.09-.59 4.22-1.57l.27.28v.79L17 18.5 18.5 17l-3-3zM9.5 12c-2.49 0-4.5-2.01-4.5-4.5S7.01 3 9.5 3 14 5.01 14 7.5 11.99 12 9.5 12z"/>
-        </svg>
-        <span>Verify with Stelthar</span>
-    </button>
-
-    <div id="loading-indicator" style="display: none;">
-        <div class="beacon-loader">
-            <div class="beacon-ring"></div>
-            <div class="beacon-ring"></div>
-            <div class="beacon-ring"></div>
-            <div class="beacon-ring"></div>
-        </div>
-    </div>
-
-    <div id="results-area" style="display: none;">
-        <div class="section">
-            <div id="verdict-text">VERDICT: ...</div>
-            <div id="confidence-text">CONFIDENCE: ...</div>
-            <div id="summary-text">Loading summary...</div>
-        </div>
-
-        <div class="section">
-            <div class="section-title">Evidence Links</div>
-            <ul id="evidence-links-list">
-                </ul>
-        </div>
-
-        <details id="sources-dropdown" style="display: none;">
-            <summary>View All Sources Consulted</summary>
-            <ul id="sources-list">
-                </ul>
-        </details>
-    </div>
-
-     <div id="error-message"></div>
-    <script src="popup.js"></script>
-    <script>
-        (function () {
-            const btn = document.getElementById('verifyBtn');
-            if (!btn) return;
-
-            btn.addEventListener('mousedown', () => {
-                btn.classList.add('pressed');
-            });
-            btn.addEventListener('mouseup', () => {
-                btn.classList.remove('pressed');
-            });
-            btn.addEventListener('mouseleave', () => {
-                btn.classList.remove('pressed');
-            });
-
-            btn.addEventListener('keydown', (e) => {
-                if (e.key === ' ' || e.key === 'Enter') {
-                    btn.classList.add('pressed');
+        if (typeof conf === 'string') {
+            let s = conf.trim();
+            if (s.endsWith('%')) {
+                return s;
+            }
+            const num = Number(s.replace(',', ''));
+            if (!isNaN(num)) {
+                if (num > 0 && num <= 1) {
+                    return `${Math.round(num * 100)}%`;
                 }
-            });
-            btn.addEventListener('keyup', (e) => {
-                if (e.key === ' ' || e.key === 'Enter') {
-                    btn.classList.remove('pressed');
+                return `${Math.round(num)}%`;
+            }
+            return s;
+        }
+        return String(conf);
+    };
+
+    chrome.storage.local.get(["stelthar_last_claim"], (data) => {
+        const claim = data.stelthar_last_claim;
+        console.log("Popup loaded. Claim from storage:", claim);
+        if (claim) {
+            claimTextEl.textContent = `"${claim}"`;
+            verifyBtn.disabled = false;
+        } else {
+            claimTextEl.textContent = "No claim detected. Highlight text on a page first, then click the 'Verify' button that appears.";
+            verifyBtn.disabled = true;
+        }
+    });
+
+    verifyBtn.onclick = async () => {
+        clearResults();
+        verifyBtn.disabled = true;
+        loadingIndicator.style.display = 'flex';
+        chrome.storage.local.get(["stelthar_last_claim"], async (data) => {
+            const claim = data.stelthar_last_claim;
+            if (!claim) {
+                errorMessageEl.textContent = "No claim found in storage. Highlight text first.";
+                errorMessageEl.style.display = 'block';
+                loadingIndicator.style.display = 'none';
+                return;
+            }
+
+            console.log("Verifying claim:", claim);
+
+            try {
+                const resp = await fetch(BACKEND_URL, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ claim }),
+                });
+
+                if (!resp.ok) {
+                    let errorDetail = resp.statusText;
+                    try {
+                        const errorJson = await resp.json();
+                        errorDetail = errorJson.detail || errorDetail;
+                    } catch (e) {}
+                    throw new Error(`Backend error: ${resp.status} ${errorDetail}`);
                 }
-            });
-        })();
-    </script>
-</body>
-</html>
+
+                const jsonResp = await resp.json();
+                console.log("Received response:", jsonResp);
+
+                loadingIndicator.style.display = 'none';
+                resultsArea.style.display = 'block';
+                verifyBtn.disabled = false;
+
+                verdictTextEl.textContent = `VERDICT: ${jsonResp.verdict.toUpperCase()}`;
+                verdictTextEl.className = jsonResp.verdict.toLowerCase();
+                confidenceTextEl.textContent = `CONFIDENCE: ${formatConfidence(jsonResp.confidence)}`;
+                summaryTextEl.textContent = jsonResp.summary || '';
+
+                evidenceLinksListEl.innerHTML = '';
+                if (jsonResp.evidence_links && jsonResp.evidence_links.length > 0) {
+                    jsonResp.evidence_links.forEach(link => {
+                        const li = document.createElement('li');
+                        const a = document.createElement('a');
+                        a.href = link.source_url;
+                        a.textContent = link.finding;
+                        a.target = '_blank';
+                        li.appendChild(a);
+                        evidenceLinksListEl.appendChild(li);
+                    });
+                } else {
+                    evidenceLinksListEl.innerHTML = '<li>No evidence links provided.</li>';
+                }
+
+                sourcesListEl.innerHTML = '';
+                if (jsonResp.sources && jsonResp.sources.length > 0) {
+                    sourcesDropdown.style.display = 'block';
+                    jsonResp.sources.forEach(source => {
+                        const li = document.createElement('li');
+                        const titleSpan = document.createElement('span');
+                        titleSpan.className = 'source-title';
+                        titleSpan.textContent = source.title;
+                        li.appendChild(titleSpan);
+
+                        if (source.snippet) {
+                            const snippetSpan = document.createElement('span');
+                            snippetSpan.className = 'source-snippet';
+                            snippetSpan.textContent = `"${source.snippet}"`;
+                            li.appendChild(snippetSpan);
+                        }
+
+                        const a = document.createElement('a');
+                        a.href = source.url;
+                        a.textContent = source.url;
+                        a.target = '_blank';
+                        li.appendChild(a);
+
+                        sourcesListEl.appendChild(li);
+                    });
+                }
+
+            } catch (error) {
+                console.error("Verification failed:", error);
+                loadingIndicator.style.display = 'none';
+                errorMessageEl.textContent = `Error: ${error.message}`;
+                errorMessageEl.style.display = 'block';
+                verifyBtn.disabled = false;
+            }
+        });
+    };
+});

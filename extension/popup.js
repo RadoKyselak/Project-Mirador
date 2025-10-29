@@ -87,14 +87,14 @@ document.addEventListener("DOMContentLoaded", () => {
                 evidenceLinksListEl.innerHTML = '';
                 if (jsonResp.evidence_links && jsonResp.evidence_links.length > 0) {
                     jsonResp.evidence_links.forEach(link => {
-                        const li = document.createElement('li');
-                        const a = document.createElement('a');
-                        a.href = link;
-                        a.textContent = link;
-                        a.target = '_blank';
-                        li.appendChild(a);
-                        evidenceLinksListEl.appendChild(li);
-                    });
+                    const li = document.createElement('li');
+                    const a = document.createElement('a');
+                    a.href = link.source_url;
+                    a.textContent = link.finding;
+                    a.target = '_blank';
+                    li.appendChild(a);
+                    evidenceLinksListEl.appendChild(li);
+                });
                 } else {
                     evidenceLinksListEl.innerHTML = '<li>No evidence links provided.</li>';
                 }
@@ -137,3 +137,4 @@ document.addEventListener("DOMContentLoaded", () => {
         });
     };
 });
+

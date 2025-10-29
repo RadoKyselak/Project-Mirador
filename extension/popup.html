@@ -11,6 +11,17 @@
             background-color: #fdfaf3;
             color: #1a1a1a;
         }
+
+        #main-title {
+            font-size: 22px;
+            font-weight: bold;
+            text-align: center;
+            color: #333;
+            margin-bottom: 15px;
+            border-bottom: 2px solid #e0e0e0;
+            padding-bottom: 10px;
+        }
+
         .section {
             margin-bottom: 15px;
             border: 1px solid #e0e0e0;
@@ -55,10 +66,12 @@
             font-size: 18px;
             margin-bottom: 5px;
         }
+        /* Corrected verdict colors */
         #verdict-text.supported { color: #008000; }
         #verdict-text.contradicted { color: #CC0000; }
         #verdict-text.inconclusive { color: #FFA500; }
         #verdict-text.error { color: #CC0000; }
+
         #confidence-text {
             font-size: 14px;
             color: #666;
@@ -133,12 +146,27 @@
         }
         #sources-list a:hover { text-decoration: underline; }
 
+        /* Corrected Full-Screen Loader Styles */
         #loading-indicator {
-            display: none;
-            text-align: center;
-            margin: 20px 0;
+            display: none; 
+            position: fixed; 
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: #fdfaf3; 
+            z-index: 1000; 
+
+            /* Use Flexbox to center */
+            flex-direction: column;
             justify-content: center;
             align-items: center;
+        }
+        .loading-title {
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 18px;
+            font-weight: bold;
+            color: #333;
         }
         .loader {
             border: 5px solid #f3f3f3;
@@ -147,9 +175,10 @@
             width: 40px;
             height: 40px;
             animation: spin 1s linear infinite;
-            margin: auto;
+            margin-top: 20px; 
         }
 
+        /* @keyframes rule MOVED to the top level */
         @keyframes spin {
             0% { transform: rotate(0deg); }
             100% { transform: rotate(360deg); }
@@ -168,6 +197,8 @@
     </style>
 </head>
 <body>
+    <div id="main-title">Project Mirador</div>
+    
     <div class="section">
         <div class="section-title">Claim</div>
         <div id="claim-text">Loading claim...</div>
@@ -176,6 +207,7 @@
     <button id="verifyBtn">Verify Claim</button>
 
     <div id="loading-indicator">
+        <div class="loading-title">Verifying Claim...</div>
         <div class="loader"></div>
     </div>
 
@@ -204,5 +236,3 @@
     <script src="popup.js"></script>
 </body>
 </html>
-
-

@@ -1,7 +1,6 @@
 const BACKEND_URL = "https://stelthar-api.vercel.app/verify";
 
 document.addEventListener("DOMContentLoaded", () => {
-
     const claimTextEl = document.getElementById("claim-text");
     const verifyBtn = document.getElementById("verifyBtn");
     const loadingIndicator = document.getElementById("loading-indicator");
@@ -26,6 +25,31 @@ document.addEventListener("DOMContentLoaded", () => {
         summaryTextEl.textContent = 'Loading summary...';
         evidenceLinksListEl.innerHTML = '';
         sourcesListEl.innerHTML = '';
+    };
+
+    const formatConfidence = (conf) => {
+        if (conf === null || conf === undefined) return 'N/A';
+        if (typeof conf === 'number') {
+            if (conf > 0 && conf <= 1) {
+                return `${Math.round(conf * 100)}%`;
+            }
+            return `${Math.round(conf)}%`;
+        }
+        if (typeof conf === 'string') {
+            let s = conf.trim();
+            if (s.endsWith('%')) {
+                return s;
+            }
+            const num = Number(s.replace(',', ''));
+            if (!isNaN(num)) {
+                if (num > 0 && num <= 1) {
+                    return `${Math.round(num * 100)}%`;
+                }
+                return `${Math.round(num)}%`;
+            }
+            return s;
+        }
+        return String(conf);
     };
 
     chrome.storage.local.get(["stelthar_last_claim"], (data) => {
@@ -80,20 +104,20 @@ document.addEventListener("DOMContentLoaded", () => {
 
                 verdictTextEl.textContent = `VERDICT: ${jsonResp.verdict.toUpperCase()}`;
                 verdictTextEl.className = jsonResp.verdict.toLowerCase();
-                confidenceTextEl.textContent = `CONFIDENCE: ${jsonResp.confidence}`;
-                summaryTextEl.textContent = jsonResp.summary;
+                confidenceTextEl.textContent = `CONFIDENCE: ${formatConfidence(jsonResp.confidence)}`;
+                summaryTextEl.textContent = jsonResp.summary || '';
 
                 evidenceLinksListEl.innerHTML = '';
                 if (jsonResp.evidence_links && jsonResp.evidence_links.length > 0) {
                     jsonResp.evidence_links.forEach(link => {
-                    const li = document.createElement('li');
-                    const a = document.createElement('a');
-                    a.href = link.source_url;
-                    a.textContent = link.finding;
-                    a.target = '_blank';
-                    li.appendChild(a);
-                    evidenceLinksListEl.appendChild(li);
-                });
+                        const li = document.createElement('li');
+                        const a = document.createElement('a');
+                        a.href = link.source_url;
+                        a.textContent = link.finding;
+                        a.target = '_blank';
+                        li.appendChild(a);
+                        evidenceLinksListEl.appendChild(li);
+                    });
                 } else {
                     evidenceLinksListEl.innerHTML = '<li>No evidence links provided.</li>';
                 }
@@ -103,7 +127,6 @@ document.addEventListener("DOMContentLoaded", () => {
                     sourcesDropdown.style.display = 'block';
                     jsonResp.sources.forEach(source => {
                         const li = document.createElement('li');
-
                         const titleSpan = document.createElement('span');
                         titleSpan.className = 'source-title';
                         titleSpan.textContent = source.title;
@@ -136,5 +159,3 @@ document.addEventListener("DOMContentLoaded", () => {
         });
     };
 });
-
-

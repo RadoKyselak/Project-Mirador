@@ -1,7 +1,7 @@
 # Stelthar API
 Stelthar provides real-time, government-backed data fact-checking for a better, more transparent version of the internet.
 
-Disinformation erodes public trust, and traditional fact-checking is slow. Stelthar's fact-checking verifies or argues claims by comparing claim validity against official government data sources.
+Disinformation erodes public trust, and traditional fact-checking is slow, inriliable, or both. Stelthar's fact-checking API verifies or argues claims by comparing claim validity against official government data sources.
 
 Highlight any text, and our browser extension provides an evidence-based verdict, a confidence score, and links to the primary sources. This reduces verification time from hours to seconds, empowering users to challenge misinformation with auditable proof.
 
@@ -14,6 +14,6 @@ Highlight any text, and our browser extension provides an evidence-based verdict
 - Browser extension integration for on-page highlight-and-check functionality
 - API-first design for easy integration into apps, dashboards, and extensions
 
-For systems that matter - Steltar
+Open Truth. Verified Data. - Project Mirador Powered by Stelthar API
 
-Notice: BLS.gov cannot vouch for the data or analyses derived from these data after the data have been retrieved from BLS.gov.
+Notice: This product uses data from official U.S. government sources but is not endorsed or certified by the United States Government or any of its agencies.

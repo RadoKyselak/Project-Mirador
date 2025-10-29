@@ -1072,10 +1072,10 @@ async def verify(req: VerifyRequest):
 
         confidence_data = await compute_confidence(sources_results, verdict, claim_norm)
 
-        confidence_val = confidence_data.get("confidence", 0.0)
+        confidence_val = round(confidence_data.get("confidence", 0.0) * 100)
 
-        if confidence_val > 0.75: confidence_tier = "High"
-        elif confidence_val > 0.5: confidence_tier = "Medium"
+        if confidence_val > 75: confidence_tier = "High"
+        elif confidence_val > 50: confidence_tier = "Medium"
         else: confidence_tier = "Low"
 
         end_time = asyncio.get_event_loop().time()
@@ -1122,6 +1122,7 @@ async def verify(req: VerifyRequest):
                 "status": "failed",
             }],
         }
+
 
 
 

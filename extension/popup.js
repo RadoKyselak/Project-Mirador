@@ -42,9 +42,8 @@ document.addEventListener("DOMContentLoaded", () => {
 
     verifyBtn.onclick = async () => {
         clearResults();
-        loadingIndicator.style.display = 'block';
         verifyBtn.disabled = true;
-
+        loadingIndicator.style.display = 'flex';
         chrome.storage.local.get(["stelthar_last_claim"], async (data) => {
             const claim = data.stelthar_last_claim;
             if (!claim) {
@@ -137,4 +136,5 @@ document.addEventListener("DOMContentLoaded", () => {
         });
     };
 });
+
 

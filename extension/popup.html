@@ -1,167 +1,206 @@
-<style>
-    body {
-        font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-        width: 350px;
-        padding: 15px;
-        background-color: #f0eadd;
-        color: #1a1a1a;
-        border: 2px solid #000;
-        font-size: 14px;
-        line-height: 1.5;
-    }
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Stelthar Verification</title>
+    <meta charset="UTF-8">
+    <style>
+        body {
+            width: 350px;
+            font-family:'Courier New', Courier, monospace;
+            padding: 15px;
+            background-color: #fdfaf3;
+            color: #1a1a1a;
+        }
+        .section {
+            margin-bottom: 15px;
+            border: 1px solid #e0e0e0;
+            padding: 10px;
+            border-radius: 5px;
+            background-color: #fff;
+        }
+        .section-title {
+            font-weight: bold;
+            margin-bottom: 8px;
+            font-size: 14px;
+            color: #333;
+        }
+        #claim-text {
+            font-style: italic;
+            color: #555;
+            font-size: 14px;
+        }
+        #verifyBtn {
+            font-family: 'Courier New', Courier, monospace;
+            width: 100%;
+            padding: 10px;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+            background-color: #4a4a4a;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            margin-bottom: 15px;
+            transition: background-color 0.2s;
+        }
+        #verifyBtn:hover:not(:disabled) { background-color: #333; }
+        #verifyBtn:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
+        #results-area {
+            display: none;
+        }
+        #verdict-text {
+            font-weight: bold;
+            font-size: 18px;
+            margin-bottom: 5px;
+        }
+        #verdict-text.true { color: #28a745; }
+        #verdict-text.false { color: #dc3545; }
+        #verdict-text.unverifiable { color: #ffc107; }
+        #confidence-text {
+            font-size: 14px;
+            color: #666;
+            margin-bottom: 10px;
+        }
+        #summary-text {
+            font-size: 14px;
+            line-height: 1.5;
+        }
+        #evidence-links-list {
+            list-style: none;
+            padding-left: 0;
+            margin-top: 10px;
+        }
+        #evidence-links-list li {
+            margin-bottom: 5px;
+        }
+        #evidence-links-list a {
+            color: #0000EE;
+            text-decoration: none;
+            font-size: 12px;
+        }
+        #evidence-links-list a:hover { text-decoration: underline; }
 
-    button#verifyBtn {
-        width: 100%;
-        margin-bottom: 15px;
-        padding: 10px 12px;
-        cursor: pointer;
-        background-color: #000;
-        color: #fff;
-        border: none;
-        border-radius: 0;
-        font-family: inherit;
-        font-weight: bold;
-        font-size: 14px;
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
-    }
-    button#verifyBtn:disabled {
-        cursor: not-allowed;
-        background-color: #888;
-    }
+        details#sources-dropdown {
+            margin-top: 15px;
+            border: 1px dashed #888;
+            border-radius: 4px;
+            background-color: #f9f5ed;
+        }
+        details#sources-dropdown summary {
+            padding: 8px 10px;
+            font-weight: bold;
+            cursor: pointer;
+            outline: none;
+            font-size: 13px;
+        }
+        details#sources-dropdown summary::marker {
+           color: #1a1a1a;
+        }
+        #sources-list {
+            list-style: none;
+            padding: 0 10px 10px 25px;
+            margin: 0;
+            font-size: 12px;
+            max-height: 200px;
+            overflow-y: auto;
+            border-top: 1px dashed #aaa;
+        }
+        #sources-list li {
+            margin-bottom: 10px;
+            border-bottom: 1px dotted #ccc;
+            padding-bottom: 8px;
+        }
+         #sources-list li span.source-title {
+            display: block;
+            font-weight: bold;
+            color: #1a1a1a;
+         }
+        #sources-list li span.source-snippet {
+            display: block;
+            color: #555;
+            margin-top: 3px;
+            font-style: italic;
+        }
+        #sources-list a {
+            color: #0000EE;
+            text-decoration: none;
+            display: block;
+            margin-top: 3px;
+            word-break: break-all;
+        }
+        #sources-list a:hover { text-decoration: underline; }
 
-    .section {
-        border: none;
-        border-bottom: 2px solid #000;
-        padding: 10px 0;
-        margin-bottom: 10px;
-        background-color: transparent;
-    }
+        #loading-indicator {
+            display: none;
+            text-align: center;
+            margin: 20px 0;
+            justify-content: center;
+            align-items: center;
+        }
+        .loader {
+            border: 5px solid #f3f3f3;
+            border-top: 5px solid #3498db;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: auto;
+        }
 
-    #results-area > .section:last-of-type,
-    details#sources-dropdown {
-        border-bottom: none;
-        padding-bottom: 0;
-        margin-bottom: 0;
-    }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
 
-    .section-title {
-        font-weight: bold;
-        text-transform: uppercase;
-        margin-bottom: 8px;
-        font-size: 15px;
-        letter-spacing: 1px;
-    }
+        #error-message {
+            color: #CC0000;
+            margin-top: 10px;
+            font-weight: bold;
+            border: 1px solid #CC0000;
+            background-color: #ffeeee;
+            padding: 8px;
+            display: none;
+            border-radius: 4px;
+        }
+    </style>
+</head>
+<body>
+    <div class="section">
+        <div class="section-title">Claim</div>
+        <div id="claim-text">Loading claim...</div>
+    </div>
 
-    #claim-text {
-        font-size: 15px;
-        color: #333;
-        min-height: 2em;
-        margin-bottom: 5px;
-    }
+    <button id="verifyBtn">Verify Claim</button>
 
-    #verdict-text {
-        font-weight: bold;
-        font-size: 18px;
-        text-transform: uppercase;
-        margin-bottom: 4px;
-    }
-    #verdict-text.contradicted { color: #CC0000; }
-    #verdict-text.supported { color: #008000; }
-    #verdict-text.inconclusive { color: #B8860B; }
+    <div id="loading-indicator">
+        <div class="loader"></div>
+    </div>
 
-    #confidence-text {
-        font-weight: bold;
-        font-size: 16px;
-    }
+    <div id="results-area" style="display: none;">
+        <div class="section">
+            <div id="verdict-text">VERDICT: ...</div>
+            <div id="confidence-text">CONFIDENCE: ...</div>
+            <div id="summary-text">Loading summary...</div>
+        </div>
 
-    #confidence-breakdown {
-        font-size: 14px;
-        line-height: 1.6;
-        color: #555;
-        padding-left: 10px;
-        margin-top: 8px;
-    }
+        <div class="section">
+            <div class="section-title">Evidence Links</div>
+            <ul id="evidence-links-list">
+                </ul>
+        </div>
 
-    #summary-text {
-        font-size: 15px;
-        color: #333;
-        margin-top: 10px;
-    }
+        <details id="sources-dropdown" style="display: none;">
+            <summary>View All Sources Consulted</summary>
+            <ul id="sources-list">
+                </ul>
+        </details>
+    </div>
 
-    #evidence-links-list {
-        list-style: none;
-        padding-left: 0;
-        margin-top: 0;
-    }
-    #evidence-links-list li {
-        margin-bottom: 14px;
-        font-size: 14px;
-        line-height: 1.4;
-    }
-    #evidence-links-list li span.finding {
-        display: block;
-        font-weight: bold;
-        color: #000;
-    }
-    #evidence-links-list a {
-        color: #0000EE;
-        text-decoration: underline;
-        display: block;
-        margin-top: 2px;
-        word-break: break-all;
-        font-size: 13px;
-    }
-    #evidence-links-list a:hover { text-decoration: none; }
+     <div id="error-message"></div>
 
-    details#sources-dropdown {
-        margin-top: 15px;
-        border: 1px dashed #888;
-        border-radius: 4px;
-        background-color: #f9f5ed;
-    }
-    details#sources-dropdown summary {
-        padding: 8px 10px;
-        font-weight: bold;
-        cursor: pointer;
-        outline: none;
-        font-size: 13px;
-    }
-    details#sources-dropdown summary::marker { color: #1a1a1a; }
-    #sources-list {
-        list-style: none;
-        padding: 0 10px 10px 25px;
-        margin: 0;
-        font-size: 12px;
-        max-height: 200px;
-        overflow-y: auto;
-        border-top: 1px dashed #aaa;
-    }
-    #sources-list li { margin-bottom: 10px; border-bottom: 1px dotted #ccc; padding-bottom: 8px; }
-    #sources-list li span.source-title { display: block; font-weight: bold; color: #1a1a1a; }
-    #sources-list li span.source-snippet { display: block; color: #555; margin-top: 3px; font-style: italic; }
-    #sources-list a { color: #0000EE; text-decoration: none; display: block; margin-top: 3px; word-break: break-all; }
-    #sources-list a:hover { text-decoration: underline; }
-
-    #loading-indicator {
-        display: none;
-        text-align: center;
-        margin: 20px 0;
-    }
-    #loading-indicator img {
-        width: 40px;
-        height: 40px;
-        opacity: 0.8;
-    }
-    #error-message {
-        color: #CC0000;
-        margin-top: 10px;
-        font-weight: bold;
-        border: 1px solid #CC0000;
-        background-color: #ffeeee;
-        padding: 8px;
-        display: none;
-        border-radius: 4px;
-    }
-</style>
-
+    <script src="popup.js"></script>
+</body>
+</html>

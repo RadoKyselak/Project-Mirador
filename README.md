@@ -1,4 +1,4 @@
-# Stelthar API
+# Project Mirador
 Project Mirador provides real-time, government-backed data fact-checking for a better, more transparent version of the internet.
 
 Disinformation erodes public trust, and traditional fact-checking is slow, inriliable, or both. Stelthar's fact-checking API verifies or argues claims by comparing claim validity against official government data sources.

@@ -212,7 +212,7 @@ def _parse_numeric_value(val: Any) -> Optional[float]:
         s = str(val).strip()
         # Fast path for simple numeric values (no special formatting)
         # Only use if it's a simple number without commas, $, or parentheses
-        if not any(c in s for c in ",$()"):
+        if ',' not in s and '$' not in s and '(' not in s and ')' not in s:
             try:
                 return float(s)
             except ValueError:
@@ -835,7 +835,7 @@ async def execute_query_plan(plan: Dict[str, Any], claim_type: str) -> List[Dict
                logger.warning("BLS plan missing required parameters: %s", bls_params)
 
 
-    # Deduplicate and filter keywords efficiently
+    # Deduplicate and filter keywords efficiently (strip only once per keyword)
     unique_kws = []
     seen = set()
     for kw in tier2_kws:

@@ -51,6 +51,9 @@ EMBEDDING_MODEL_NAME = "text-embedding-004"
 GEMINI_EMBED_ENDPOINT = f"https://generativelanguage.googleapis.com/v1beta/models/{EMBEDDING_MODEL_NAME}:embedContent"
 GEMINI_BATCH_EMBED_ENDPOINT = f"https://generativelanguage.googleapis.com/v1beta/models/{EMBEDDING_MODEL_NAME}:batchEmbedContents"
 
+# Keywords that indicate Congress API should be queried
+CONGRESS_KEYWORDS = {"bill", "act", "law", "congress", "legislation", "senate", "house"}
+
 # Cache prompt templates to avoid reconstruction
 CLAIM_ANALYSIS_PROMPT_TEMPLATE = """
     You are a research analyst expert in U.S. government data APIs (BEA, Census, BLS, Data.gov, Congress.gov).
@@ -743,32 +746,30 @@ async def query_datagov(keyword_query: str) -> List[Dict[str, str]]:
             data = r.json()
             results_list = data.get("result", {}).get("results", [])
             out = []
+            preferred_formats = ['csv', 'json', 'xls', 'xlsx', 'zip', 'pdf']
+            
             for item in results_list:
                 title = item.get('title', 'N/A')
                 notes = (item.get("notes") or "")[:300]
                 resources = item.get("resources") or []
+                
+                # Find best resource URL
                 resource_url = None
                 if resources and isinstance(resources, list):
-                    preferred_formats = ['csv', 'json', 'xls', 'xlsx', 'zip', 'pdf']
-                    found_url = None
+                    # Try to find preferred format first
                     for res in resources:
                         res_url = res.get('url')
                         res_format = (res.get('format') or '').lower()
                         if res_url and any(fmt in res_format for fmt in preferred_formats):
-                            found_url = res_url
+                            resource_url = res_url
                             break
-                    if not found_url and resources:
-                          resource_url = resources[0].get('url')
-                    else:
-                          resource_url = found_url
+                    # Fall back to first resource if no preferred format found
+                    if not resource_url and resources:
+                        resource_url = resources[0].get('url')
 
+                # Determine final URL (prefer direct resource, fall back to dataset page)
                 dataset_page = f"https://catalog.data.gov/dataset/{item.get('name')}" if item.get("name") else None
-
-                final_url = None
-                if isinstance(resource_url, str) and resource_url.startswith("http"):
-                    final_url = resource_url
-                elif dataset_page:
-                    final_url = dataset_page
+                final_url = resource_url if (isinstance(resource_url, str) and resource_url.startswith("http")) else dataset_page
 
                 out.append({
                     "title": f"Data.gov: {title}",
@@ -830,11 +831,14 @@ async def execute_query_plan(plan: Dict[str, Any], claim_type: str) -> List[Dict
                logger.warning("BLS plan missing required parameters: %s", bls_params)
 
 
-    unique_kws = sorted(list(set(kw for kw in tier2_kws if isinstance(kw, str) and kw.strip())))
+    # Deduplicate and filter keywords efficiently
+    unique_kws = list({kw.strip() for kw in tier2_kws if isinstance(kw, str) and kw.strip()})
 
     for kw in unique_kws:
         tasks.append(query_datagov(kw))
-        if "bill" in kw.lower() or "act" in kw.lower() or "law" in kw.lower() or "congress" in kw.lower() or claim_type == "legislative":
+        # Check if keyword suggests Congress API should be queried
+        kw_lower = kw.lower()
+        if any(keyword in kw_lower for keyword in CONGRESS_KEYWORDS) or claim_type == "legislative":
             tasks.append(query_congress(keyword_query=kw))
 
     if not tasks:

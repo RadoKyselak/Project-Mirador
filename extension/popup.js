@@ -30,14 +30,17 @@ document.addEventListener("DOMContentLoaded", () => {
     const formatConfidence = (conf) => {
         if (conf === null || conf === undefined) return 'N/A';
         
+        // Convert to string for checking
+        const confStr = String(conf).trim();
+        
         // Handle string that already has %
-        if (typeof conf === 'string' && conf.trim().endsWith('%')) {
-            return conf.trim();
+        if (confStr.endsWith('%')) {
+            return confStr;
         }
         
-        // Parse as number
-        const num = typeof conf === 'number' ? conf : parseFloat(String(conf).replace(',', ''));
-        if (isNaN(num)) return String(conf);
+        // Parse as number (remove commas if present)
+        const num = typeof conf === 'number' ? conf : parseFloat(confStr.replace(',', ''));
+        if (isNaN(num)) return confStr;
         
         // Convert to percentage (0-1 range becomes 0-100)
         const percentage = num > 0 && num <= 1 ? num * 100 : num;

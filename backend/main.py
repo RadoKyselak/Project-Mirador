@@ -836,7 +836,14 @@ async def execute_query_plan(plan: Dict[str, Any], claim_type: str) -> List[Dict
 
 
     # Deduplicate and filter keywords efficiently
-    unique_kws = list({kw.strip() for kw in tier2_kws if isinstance(kw, str) and kw.strip()})
+    unique_kws = []
+    seen = set()
+    for kw in tier2_kws:
+        if isinstance(kw, str):
+            stripped = kw.strip()
+            if stripped and stripped not in seen:
+                seen.add(stripped)
+                unique_kws.append(stripped)
 
     for kw in unique_kws:
         tasks.append(query_datagov(kw))

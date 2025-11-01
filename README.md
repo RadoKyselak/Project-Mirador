@@ -1,5 +1,5 @@
 # Project Mirador
-This repository is the codebase for Project Mirador and the Stelthar API.
+This repository is the codebase for **Project Mirador** and the **Stelthar API.**
 
 Project Mirador provides real-time, government-backed data fact-checking for a better, more transparent version of the internet.
 
@@ -25,6 +25,10 @@ Tech stack
   - Intelligence: Gemini (restrained)
 - Dev: VSCode (IDE), Vercel (API hosting), Postman (API testing)
 
-Open Truth. Verified Data. - Project Mirador Powered by Stelthar API (built and designed by Rado Kyselak)
+**Disclaimer**
+----------
 
-Notice: This product uses data from official U.S. government sources but is not endorsed or certified by the United States Government or any of its agencies.
+Project Mirador uses publicly available U.S. Government open data sources but is not affiliated with or endorsed by any governmental agency.
+Verdicts and confidence scores are algorithmic estimates — they assist, not replace, human judgment.
+
+Open Truth. Verified Data. - Project Mirador Powered by Stelthar API (built and designed by Rado Kyselak)

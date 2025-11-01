@@ -29,27 +29,12 @@ document.addEventListener("DOMContentLoaded", () => {
 
     const formatConfidence = (conf) => {
         if (conf === null || conf === undefined) return 'N/A';
-        if (typeof conf === 'number') {
-            if (conf > 0 && conf <= 1) {
-                return `${Math.round(conf * 100)}%`;
-            }
-            return `${Math.round(conf)}%`;
-        }
-        if (typeof conf === 'string') {
-            let s = conf.trim();
-            if (s.endsWith('%')) {
-                return s;
-            }
-            const num = Number(s.replace(',', ''));
-            if (!isNaN(num)) {
-                if (num > 0 && num <= 1) {
-                    return `${Math.round(num * 100)}%`;
-                }
-                return `${Math.round(num)}%`;
-            }
-            return s;
-        }
-        return String(conf);
+        const num = typeof conf === 'number' ? conf : parseFloat(String(conf).replace('%', '').replace(',', ''));
+        if (isNaN(num)) return String(conf);
+        
+        // Convert to percentage (0-1 range becomes 0-100)
+        const percentage = num > 0 && num <= 1 ? num * 100 : num;
+        return `${Math.round(percentage)}%`;
     };
 
     chrome.storage.local.get(["stelthar_last_claim"], (data) => {

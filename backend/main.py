@@ -51,6 +51,124 @@ EMBEDDING_MODEL_NAME = "text-embedding-004"
 GEMINI_EMBED_ENDPOINT = f"https://generativelanguage.googleapis.com/v1beta/models/{EMBEDDING_MODEL_NAME}:embedContent"
 GEMINI_BATCH_EMBED_ENDPOINT = f"https://generativelanguage.googleapis.com/v1beta/models/{EMBEDDING_MODEL_NAME}:batchEmbedContents"
 
+# Cache prompt templates to avoid reconstruction
+CLAIM_ANALYSIS_PROMPT_TEMPLATE = """
+    You are a research analyst expert in U.S. government data APIs (BEA, Census, BLS, Data.gov, Congress.gov).
+    Your goal is to analyze the user's claim and generate the *best possible single plan* to verify it using these APIs.
+
+    **Analysis Steps:**
+    1.  **Normalize Claim:** Rephrase the claim into a clear, verifiable statement (`claim_normalized`).
+    2.  **Identify Entities:** List the specific concepts, agencies, metrics, locations, and timeframes mentioned (`entities`).
+    3.  **Determine Claim Type:** Classify the claim (`claim_type`: quantitative_comparison, quantitative_value, factual, legislative, economic_indicator, other).
+    4.  **Identify Relationship:** State the link asserted (e.g., "greater than", "value is X") (`relationship`).
+    5.  **CRITICAL - Select API Strategy:** Based on the entities, choose the *most appropriate* API(s):
+        * **Specific Agency/Department Budget/Spending?** (e.g., "Dept of Education budget", "NASA funding"): Primarily use `tier2_keywords` for `Data.gov`. **Do NOT use BEA.**
+        * **Broad Economic Function Spending?** (e.g., "total spending on national defense function", "total education spending"): Use `BEA` (T31600).
+        * **Demographic Data?** (e.g., "population of Alabama", "median income"): Use `Census ACS`.
+        * **Inflation (CPI) or Unemployment Rate?**: Use `BLS`.
+        * **Legislation/Bills?** (e.g., "CHIPS Act funding"): Primarily use `tier2_keywords` for `Congress.gov`.
+        * **Other Specific Reports/Data/Topics?**: Use `tier2_keywords` for `Data.gov`.
+    6.  **Generate API Plan:** Create the `api_plan` JSON. Fill `tier1_params` for BEA/Census/BLS if chosen. Fill `tier2_keywords` for Data.gov/Congress searches. If a specific API is chosen for Tier 1, still include relevant Tier 2 keywords as a backup or for context.
+
+    **AVAILABLE APIs & Parameters:**
+    -   `bea`: For broad *functions*. Needs `DataSetName` ("NIPA"), `TableName` ("T31600"), `Frequency` ("A"), `Year`, `LineCode` (e.g., "2" for Defense, "14" for Education).
+    -   `census_acs`: For demographics. Needs `year`, `dataset` (e.g., "acs/acs1/profile"), `get` (vars, e.g., "NAME,DP05_0001E"), `for` (geo, e.g., "state:01").
+    -   `bls`: For CPI/Unemployment. Needs `metric` ("CPI" or "unemployment") and `year`.
+    -   `tier2_keywords`: List of search strings for Data.gov (budgets, reports) and Congress.gov (bills).
+
+    **USER CLAIM:** '''{claim}'''
+
+    **Return ONLY a single valid JSON object containing `claim_normalized`, `claim_type`, `entities`, `relationship`, and `api_plan`.**
+
+    **Example (Agency Budget - Use Tier 2):**
+    Claim: "The Department of Defense budget was over $800 billion in 2023."
+    {{
+      "claim_normalized": "The Department of Defense budget exceeded $800 billion in 2023.",
+      "claim_type": "quantitative_value",
+      "entities": ["Department of Defense Budget", "2023"],
+      "relationship": "greater than",
+      "api_plan": {{
+        "tier1_params": {{ "bea": null, "census_acs": null, "bls": null }},
+        "tier2_keywords": ["Department of Defense budget 2023", "FY2023 defense appropriations summary"]
+      }}
+    }}
+
+    **Example (Broad Function - Use BEA):**
+    Claim: "Total federal spending on the function of defense was more than education in 2023."
+    {{
+      "claim_normalized": "Total federal spending on the function of defense exceeded total federal spending on the function of education in 2023.",
+      "claim_type": "quantitative_comparison",
+      "entities": ["Federal Defense Function Spending", "Federal Education Function Spending", "2023"],
+      "relationship": "greater than",
+      "api_plan": {{
+        "tier1_params": {{
+          "bea": {{"DataSetName":"NIPA","TableName":"T31600","Frequency":"A","Year":"2023","LineCode":["2", "14"]}},
+          "census_acs": null, "bls": null
+        }},
+        "tier2_keywords": ["federal spending by function 2023"]
+      }}
+    }}
+
+    **Example (Inflation - Use BLS):**
+    Claim: "Inflation was over 3% in 2023."
+      {{
+      "claim_normalized": "The US CPI inflation rate exceeded 3% in 2023.",
+      "claim_type": "economic_indicator",
+      "entities": ["US CPI Inflation", "2023"],
+      "relationship": "greater than",
+      "api_plan": {{
+        "tier1_params": {{
+          "bea": null, "census_acs": null,
+          "bls": {{"metric": "CPI", "year": "2023"}}
+        }},
+        "tier2_keywords": ["US inflation rate 2023 annual average"]
+      }}
+    }}
+    """
+
+SYNTHESIS_PROMPT_TEMPLATE = """
+    You are an objective fact-checker. Analyze the provided evidence from U.S. government sources against the user's claim.
+
+    USER'S CLAIM: '''{claim}'''
+    Claim Analysis:
+    - Normalized: {claim_normalized}
+    - Type: {claim_type}
+    - Entities: {entities}
+    - Asserted Relationship: {relationship}
+
+    AVAILABLE EVIDENCE (Each source is tagged with <Source_N>):
+    {context}
+
+    INSTRUCTIONS:
+    1.  Carefully review the user's claim and its asserted relationship between entities.
+    2.  Examine ALL evidence provided within the <Source_N> tags. Focus on data points (BEA, Census, BLS) directly relevant to the claim's entities and timeframe.
+    3.  **BEA Data:** Apply the 'Multiplier' if provided (e.g., a 'DataValue' of 1000 and 'Multiplier' of 1000000 means 1,000,000,000). Assume "Millions of dollars" (multiplier 1,000,000) for BEA NIPA tables like T31600 if multiplier is null/missing but units aren't specified.
+    4.  **Census Data:** Use the provided 'Data Point' values directly.
+    5.  **BLS Data:** Use the 'Data Point' which represents a calculated percentage (e.g., 3.5 for 3.5% or a raw index value). The Snippet/Title clarifies the metric.
+    6.  Compare relevant findings from the evidence to the claim's assertion. Perform calculations if necessary (e.g., comparisons).
+    7.  Determine the final `verdict`:
+        - "Supported": If evidence *clearly and directly* supports the claim's assertion.
+        - "Contradicted": If evidence *clearly and directly* contradicts the claim's assertion.
+        - "Inconclusive": If evidence is missing, insufficient, ambiguous, irrelevant, or requires assumptions beyond the data to make a clear judgment.
+    8.  Write a concise `summary` (1-2 sentences) stating the final conclusion and the key evidence. **Format large numbers clearly using 'billion' or 'trillion' where appropriate (e.g., '$790.2 billion').**
+    9.  Write a brief `justification` (1-2 sentences) explaining *why* you reached that verdict, referencing specific data points or lack thereof.
+    10. Create `evidence_links` (list of {{"finding": "...", "source_url": "..."}}) linking **only the most crucial data points** or findings cited in the justification back to their source URLs. Use the specific data identifier and value (e.g., "National defense (G16046) = 790,895") or a concise summary of the finding as the "finding" value. **The 'finding' string MUST NOT include the 'Unit' text (like 'Millions of Dollars') or the 'Multiplier' text (like '(Multiplier: 1000000)').** Match the finding precisely to the source URL provided in the evidence context. Limit to 2-3 key links.
+
+    Return ONLY a single valid JSON object with keys: "verdict", "summary", "justification", "evidence_links".
+
+    Example Response (BEA Comparison):
+    {{
+      "verdict": "Contradicted",
+      "summary": "The data contradicts the claim; federal spending on national defense ($790.9 billion) significantly exceeded spending on education ($178.6 billion) in 2023.",
+      "justification": "BEA NIPA T31600 data for 2023 shows Federal National Defense (G16046) spending was $790,895 million, while Federal Education (G16068) spending was $178,621 million.",
+      "evidence_links": [
+        {{"finding": "National defense (G16046) = 790,895", "source_url": "https://apps.bea.gov/api/data?..."}},
+        {{"finding": "Education (G16068) = 178,621", "source_url": "https://apps.bea.gov/api/data?..."}}
+      ]
+    }}
+    """
+
+
 
 BEA_VALID_TABLES = {
     "T10101", "T20305", "T31600", "T70500"
@@ -85,10 +203,17 @@ def extract_json_block(text: str) -> Optional[Dict[str, Any]]:
     return None
 
 def _parse_numeric_value(val: Any) -> Optional[float]:
-    if val is None: return None
+    if val is None: 
+        return None
     try:
-        s = str(val).strip().replace(",", "").replace("$", "")
-        if s.startswith("(") and s.endswith(")"): s = "-" + s[1:-1]
+        s = str(val).strip()
+        # Fast path for simple numeric values
+        if s.replace(".", "", 1).replace("-", "", 1).replace("e", "", 1).replace("E", "", 1).replace("+", "", 1).isdigit():
+            return float(s)
+        # Handle formatted values
+        s = s.replace(",", "").replace("$", "")
+        if s.startswith("(") and s.endswith(")"): 
+            s = "-" + s[1:-1]
         m = re.match(r"^(-?[\d\.eE+-]+)", s)
         return float(m.group(1)) if m else float(s)
     except (ValueError, TypeError):
@@ -203,99 +328,18 @@ def cosine_similarity(vec1: List[float], vec2: List[float]) -> float:
     if not vec1 or not vec2 or len(vec1) != len(vec2):
         return 0.0
 
-    dot_product = 0.0
-    mag_vec1_sq = 0.0
-    mag_vec2_sq = 0.0
+    dot_product = sum(v1 * v2 for v1, v2 in zip(vec1, vec2))
+    mag_vec1_sq = sum(v1 * v1 for v1 in vec1)
+    mag_vec2_sq = sum(v2 * v2 for v2 in vec2)
 
-    for v1, v2 in zip(vec1, vec2):
-        dot_product += v1 * v2
-        mag_vec1_sq += v1**2
-        mag_vec2_sq += v2**2
-
-    mag_vec1 = sqrt(mag_vec1_sq)
-    mag_vec2 = sqrt(mag_vec2_sq)
-
-    if mag_vec1 == 0 or mag_vec2 == 0:
+    if mag_vec1_sq == 0 or mag_vec2_sq == 0:
         return 0.0
 
-    return dot_product / (mag_vec1 * mag_vec2)
+    return dot_product / (sqrt(mag_vec1_sq) * sqrt(mag_vec2_sq))
 
 
 async def analyze_claim_for_api_plan(claim: str) -> Dict[str, Any]:
-    prompt_template = """
-    You are a research analyst expert in U.S. government data APIs (BEA, Census, BLS, Data.gov, Congress.gov).
-    Your goal is to analyze the user's claim and generate the *best possible single plan* to verify it using these APIs.
-
-    **Analysis Steps:**
-    1.  **Normalize Claim:** Rephrase the claim into a clear, verifiable statement (`claim_normalized`).
-    2.  **Identify Entities:** List the specific concepts, agencies, metrics, locations, and timeframes mentioned (`entities`).
-    3.  **Determine Claim Type:** Classify the claim (`claim_type`: quantitative_comparison, quantitative_value, factual, legislative, economic_indicator, other).
-    4.  **Identify Relationship:** State the link asserted (e.g., "greater than", "value is X") (`relationship`).
-    5.  **CRITICAL - Select API Strategy:** Based on the entities, choose the *most appropriate* API(s):
-        * **Specific Agency/Department Budget/Spending?** (e.g., "Dept of Education budget", "NASA funding"): Primarily use `tier2_keywords` for `Data.gov`. **Do NOT use BEA.**
-        * **Broad Economic Function Spending?** (e.g., "total spending on national defense function", "total education spending"): Use `BEA` (T31600).
-        * **Demographic Data?** (e.g., "population of Alabama", "median income"): Use `Census ACS`.
-        * **Inflation (CPI) or Unemployment Rate?**: Use `BLS`.
-        * **Legislation/Bills?** (e.g., "CHIPS Act funding"): Primarily use `tier2_keywords` for `Congress.gov`.
-        * **Other Specific Reports/Data/Topics?**: Use `tier2_keywords` for `Data.gov`.
-    6.  **Generate API Plan:** Create the `api_plan` JSON. Fill `tier1_params` for BEA/Census/BLS if chosen. Fill `tier2_keywords` for Data.gov/Congress searches. If a specific API is chosen for Tier 1, still include relevant Tier 2 keywords as a backup or for context.
-
-    **AVAILABLE APIs & Parameters:**
-    -   `bea`: For broad *functions*. Needs `DataSetName` ("NIPA"), `TableName` ("T31600"), `Frequency` ("A"), `Year`, `LineCode` (e.g., "2" for Defense, "14" for Education).
-    -   `census_acs`: For demographics. Needs `year`, `dataset` (e.g., "acs/acs1/profile"), `get` (vars, e.g., "NAME,DP05_0001E"), `for` (geo, e.g., "state:01").
-    -   `bls`: For CPI/Unemployment. Needs `metric` ("CPI" or "unemployment") and `year`.
-    -   `tier2_keywords`: List of search strings for Data.gov (budgets, reports) and Congress.gov (bills).
-
-    **USER CLAIM:** '''{claim}'''
-
-    **Return ONLY a single valid JSON object containing `claim_normalized`, `claim_type`, `entities`, `relationship`, and `api_plan`.**
-
-    **Example (Agency Budget - Use Tier 2):**
-    Claim: "The Department of Defense budget was over $800 billion in 2023."
-    {{
-      "claim_normalized": "The Department of Defense budget exceeded $800 billion in 2023.",
-      "claim_type": "quantitative_value",
-      "entities": ["Department of Defense Budget", "2023"],
-      "relationship": "greater than",
-      "api_plan": {{
-        "tier1_params": {{ "bea": null, "census_acs": null, "bls": null }},
-        "tier2_keywords": ["Department of Defense budget 2023", "FY2023 defense appropriations summary"]
-      }}
-    }}
-
-    **Example (Broad Function - Use BEA):**
-    Claim: "Total federal spending on the function of defense was more than education in 2023."
-    {{
-      "claim_normalized": "Total federal spending on the function of defense exceeded total federal spending on the function of education in 2023.",
-      "claim_type": "quantitative_comparison",
-      "entities": ["Federal Defense Function Spending", "Federal Education Function Spending", "2023"],
-      "relationship": "greater than",
-      "api_plan": {{
-        "tier1_params": {{
-          "bea": {{"DataSetName":"NIPA","TableName":"T31600","Frequency":"A","Year":"2023","LineCode":["2", "14"]}},
-          "census_acs": null, "bls": null
-        }},
-        "tier2_keywords": ["federal spending by function 2023"]
-      }}
-    }}
-
-    **Example (Inflation - Use BLS):**
-    Claim: "Inflation was over 3% in 2023."
-      {{
-      "claim_normalized": "The US CPI inflation rate exceeded 3% in 2023.",
-      "claim_type": "economic_indicator",
-      "entities": ["US CPI Inflation", "2023"],
-      "relationship": "greater than",
-      "api_plan": {{
-        "tier1_params": {{
-          "bea": null, "census_acs": null,
-          "bls": {{"metric": "CPI", "year": "2023"}}
-        }},
-        "tier2_keywords": ["US inflation rate 2023 annual average"]
-      }}
-    }}
-    """
-    prompt = prompt_template.format(claim=claim)
+    prompt = CLAIM_ANALYSIS_PROMPT_TEMPLATE.format(claim=claim)
     fallback_plan = {
         "claim_normalized": claim, "claim_type": "Other", "entities": [], "relationship": "unknown",
         "api_plan": {"tier1_params": {}, "tier2_keywords": [claim, "general government data"]}
@@ -875,47 +919,14 @@ async def synthesize_finding_with_llm(
     if len(context) > MAX_CONTEXT_LENGTH:
           context = context[:MAX_CONTEXT_LENGTH] + "\n... [Context Truncated]"
 
-    prompt = f"""
-    You are an objective fact-checker. Analyze the provided evidence from U.S. government sources against the user's claim.
-
-    USER'S CLAIM: '''{claim}'''
-    Claim Analysis:
-    - Normalized: {claim_analysis.get('claim_normalized', claim)}
-    - Type: {claim_analysis.get('claim_type', 'Unknown')}
-    - Entities: {claim_analysis.get('entities', [])}
-    - Asserted Relationship: {claim_analysis.get('relationship', 'Unknown')}
-
-    AVAILABLE EVIDENCE (Each source is tagged with <Source_N>):
-    {context}
-
-    INSTRUCTIONS:
-    1.  Carefully review the user's claim and its asserted relationship between entities.
-    2.  Examine ALL evidence provided within the <Source_N> tags. Focus on data points (BEA, Census, BLS) directly relevant to the claim's entities and timeframe.
-    3.  **BEA Data:** Apply the 'Multiplier' if provided (e.g., a 'DataValue' of 1000 and 'Multiplier' of 1000000 means 1,000,000,000). Assume "Millions of dollars" (multiplier 1,000,000) for BEA NIPA tables like T31600 if multiplier is null/missing but units aren't specified.
-    4.  **Census Data:** Use the provided 'Data Point' values directly.
-    5.  **BLS Data:** Use the 'Data Point' which represents a calculated percentage (e.g., 3.5 for 3.5% or a raw index value). The Snippet/Title clarifies the metric.
-    6.  Compare relevant findings from the evidence to the claim's assertion. Perform calculations if necessary (e.g., comparisons).
-    7.  Determine the final `verdict`:
-        - "Supported": If evidence *clearly and directly* supports the claim's assertion.
-        - "Contradicted": If evidence *clearly and directly* contradicts the claim's assertion.
-        - "Inconclusive": If evidence is missing, insufficient, ambiguous, irrelevant, or requires assumptions beyond the data to make a clear judgment.
-    8.  Write a concise `summary` (1-2 sentences) stating the final conclusion and the key evidence. **Format large numbers clearly using 'billion' or 'trillion' where appropriate (e.g., '$790.2 billion').**
-    9.  Write a brief `justification` (1-2 sentences) explaining *why* you reached that verdict, referencing specific data points or lack thereof.
-    10. Create `evidence_links` (list of {{"finding": "...", "source_url": "..."}}) linking **only the most crucial data points** or findings cited in the justification back to their source URLs. Use the specific data identifier and value (e.g., "National defense (G16046) = 790,895") or a concise summary of the finding as the "finding" value. **The 'finding' string MUST NOT include the 'Unit' text (like 'Millions of Dollars') or the 'Multiplier' text (like '(Multiplier: 1000000)').** Match the finding precisely to the source URL provided in the evidence context. Limit to 2-3 key links.
-
-    Return ONLY a single valid JSON object with keys: "verdict", "summary", "justification", "evidence_links".
-
-    Example Response (BEA Comparison):
-    {{
-      "verdict": "Contradicted",
-      "summary": "The data contradicts the claim; federal spending on national defense ($790.9 billion) significantly exceeded spending on education ($178.6 billion) in 2023.",
-      "justification": "BEA NIPA T31600 data for 2023 shows Federal National Defense (G16046) spending was $790,895 million, while Federal Education (G16068) spending was $178,621 million.",
-      "evidence_links": [
-        {{"finding": "National defense (G16046) = 790,895", "source_url": "https://apps.bea.gov/api/data?..."}},
-        {{"finding": "Education (G16068) = 178,621", "source_url": "https://apps.bea.gov/api/data?..."}}
-      ]
-    }}
-    """
+    prompt = SYNTHESIS_PROMPT_TEMPLATE.format(
+        claim=claim,
+        claim_normalized=claim_analysis.get('claim_normalized', claim),
+        claim_type=claim_analysis.get('claim_type', 'Unknown'),
+        entities=claim_analysis.get('entities', []),
+        relationship=claim_analysis.get('relationship', 'Unknown'),
+        context=context
+    )
 
     try:
         res = await call_gemini(prompt)
@@ -985,26 +996,23 @@ async def compute_confidence(sources: List[Dict[str, Any]], verdict: str, claim:
     S_semantic_sim = 0.0
 
     try:
-        texts_to_embed = [claim] if claim and claim.strip() else []
-        if not texts_to_embed:
+        if not claim or not claim.strip():
              raise ValueError("Claim text is empty, cannot compute semantic similarity.")
 
-        source_texts_indices: List[Tuple[int, str]] = []
-        current_index = 1
-
+        # Collect all unique text snippets from sources (avoid duplicates)
+        source_texts = set()
         for s in valid_sources:
             snippet = s.get('snippet', '').strip()
-            title = s.get('title', '').strip()
-            data_text = None
+            if snippet:
+                source_texts.add(snippet)
+            # For data sources, create a condensed representation
             if s.get('data_value') is not None:
-                data_text = f"{s.get('line_description', s.get('title', 'Data'))}: {s.get('raw_data_value')}"
-                data_text = data_text.strip()
+                title = s.get('title', '').strip()
+                if title:
+                    source_texts.add(title)
 
-            if snippet: texts_to_embed.append(snippet)
-            if title: texts_to_embed.append(title)
-            if data_text: texts_to_embed.append(data_text)
-
-        if len(texts_to_embed) > 1:
+        if source_texts:
+            texts_to_embed = [claim] + list(source_texts)
             all_embeddings = await get_embeddings_batch_api(texts_to_embed)
 
             if not all_embeddings or all_embeddings[0] is None:

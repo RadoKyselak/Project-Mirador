@@ -13,7 +13,7 @@ document.addEventListener("mouseup", async (e) => {
   prompt.style.borderRadius = "6px";
   prompt.style.fontSize = "12px";
   prompt.style.cursor = "pointer";
-  prompt.textContent = "Verify with Stelthar";
+  prompt.textContent = "Verify with Project Mirador";
   document.body.appendChild(prompt);
   const rect = window.getSelection().getRangeAt(0).getBoundingClientRect();
   prompt.style.top = (window.scrollY + rect.top - 30) + "px";
@@ -28,3 +28,4 @@ document.addEventListener("mouseup", async (e) => {
   };
   setTimeout(cleanup, 4000);
 });
+

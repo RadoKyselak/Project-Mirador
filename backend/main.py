@@ -210,9 +210,13 @@ def _parse_numeric_value(val: Any) -> Optional[float]:
         return None
     try:
         s = str(val).strip()
-        # Fast path for simple numeric values
-        if s.replace(".", "", 1).replace("-", "", 1).replace("e", "", 1).replace("E", "", 1).replace("+", "", 1).isdigit():
-            return float(s)
+        # Fast path for simple numeric values (no special formatting)
+        # Only use if it's a simple number without commas, $, or parentheses
+        if not any(c in s for c in ",$()"):
+            try:
+                return float(s)
+            except ValueError:
+                pass  # Fall through to complex parsing
         # Handle formatted values
         s = s.replace(",", "").replace("$", "")
         if s.startswith("(") and s.endswith(")"): 

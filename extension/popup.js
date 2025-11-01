@@ -29,7 +29,14 @@ document.addEventListener("DOMContentLoaded", () => {
 
     const formatConfidence = (conf) => {
         if (conf === null || conf === undefined) return 'N/A';
-        const num = typeof conf === 'number' ? conf : parseFloat(String(conf).replace('%', '').replace(',', ''));
+        
+        // Handle string that already has %
+        if (typeof conf === 'string' && conf.trim().endsWith('%')) {
+            return conf.trim();
+        }
+        
+        // Parse as number
+        const num = typeof conf === 'number' ? conf : parseFloat(String(conf).replace(',', ''));
         if (isNaN(num)) return String(conf);
         
         // Convert to percentage (0-1 range becomes 0-100)

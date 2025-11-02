@@ -651,7 +651,7 @@ async def query_congress(keyword_query: str) -> List[Dict[str, Any]]:
     if not keyword_query or not keyword_query.strip():
         return []
 
-    params = {"api_key": CONGRESS_API_KEY, "q": keyword_query, "limit": 3}
+    params = {"api_key": CONGRESS_API_KEY, "q": keyword_query, "limit": 3, "sort": "relevance"}
     url = "https://api.congress.gov/v3/bill"
 
     try:
@@ -1122,3 +1122,4 @@ async def verify(req: VerifyRequest):
                 "status": "failed",
             }],
         }
+

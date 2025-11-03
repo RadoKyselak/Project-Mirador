@@ -34,3 +34,5 @@ Verdicts and confidence scores are algorithmic estimates — they assist, not re
 Open Truth. Verified Data. - Project Mirador Powered by Stelthar API (built and designed by Rado Kyselak)
 
 (All code is final from 10/30/2025)
+
+The Chrome Extension is currently waiting for approval from the Chrome Store.

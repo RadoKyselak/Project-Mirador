@@ -5,17 +5,7 @@ from config.constants import API_TIMEOUTS, BEA_CONFIG
 from config import BEA_API_KEY, logger
 from utils.parsing import parse_numeric_value
 
-
 async def query_bea(params: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """
-    Query the BEA API for economic data.
-    
-    Args:
-        params: Dictionary containing query parameters including LineCode
-        
-    Returns:
-        List of result dictionaries containing BEA data
-    """
     if not BEA_API_KEY:
         return [{"error": "BEA_API_KEY missing", "source": "BEA", "status": "failed"}]
 
@@ -41,7 +31,7 @@ async def query_bea(params: Dict[str, Any]) -> List[Dict[str, Any]]:
     url = "https://apps.bea.gov/api/data"
 
     try:
-        async with httpx.AsyncClient(timeout=20.0) as client:
+        async with httpx.AsyncClient(timeout=API_TIMEOUTS.BEA) as client:
             r = await client.get(url, params=api_params)
             r.raise_for_status()
             payload = r.json()

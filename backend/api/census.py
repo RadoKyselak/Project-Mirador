@@ -34,7 +34,7 @@ async def query_census_acs(params: Dict[str, Any]) -> List[Dict[str, Any]]:
     }
 
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(timeout=API_TIMEOUTS.CENSUS) as client:
             r = await client.get(url, params=final_params)
             if r.status_code == 204:
                 logger.info("Census query returned status 204 No Content for params: %s", final_params)

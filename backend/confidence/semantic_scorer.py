@@ -95,11 +95,10 @@ class SemanticAlignmentScorer:
         for source in sources:
             if source.get('data_value') is not None:
                 data_text = f"{source.get('line_description', source.get('title', 'Data'))}: {source.get('raw_data_value')}"
-                texts.
+                texts.append(data_text.strip())
             snippet = source.get('snippet', '').strip()
             if snippet:
                 texts.append(snippet)
-
             title = source.get('title', '').strip()
             if title and title not in texts:
                 texts.append(title)

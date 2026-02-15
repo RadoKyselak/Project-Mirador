@@ -1,17 +1,9 @@
 from typing import Dict, List
 import httpx
 from config import logger
+from config.constants import API_TIMEOUTS
 
 async def query_datagov(keyword_query: str) -> List[Dict[str, str]]:
-    """
-    Query the Data.gov API for federal datasets.
-    
-    Args:
-        keyword_query: Search query string for datasets
-        
-    Returns:
-        List of result dictionaries containing dataset information
-    """
     if not keyword_query or not keyword_query.strip():
         return []
 
@@ -19,7 +11,7 @@ async def query_datagov(keyword_query: str) -> List[Dict[str, str]]:
     params = {"q": keyword_query, "rows": 5}
 
     try:
-        async with httpx.AsyncClient(timeout=20.0) as client:
+        async with httpx.AsyncClient(timeout=API_TIMEOUTS.DATA_GOV) as client:
             r = await client.get(url, params=params)
             r.raise_for_status()
             data = r.json()

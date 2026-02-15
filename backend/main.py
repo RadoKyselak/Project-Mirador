@@ -1,14 +1,18 @@
 import asyncio
 import json
+from typing import Dict, Any
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from config import check_api_keys_on_startup, logger
+from config.constants import CONFIDENCE_CONFIG
 from models import VerifyRequest
+from models.verdicts import VerificationResponse
+from models.confidence import ConfidenceBreakdown
+from domain.confidence import ConfidenceScorer
 from services import (
     analyze_claim_for_api_plan,
     execute_query_plan,
     synthesize_finding_with_llm,
-    compute_confidence
 )
 
 app = FastAPI()
@@ -33,14 +37,7 @@ async def health_check():
 
 
 @app.post("/verify")
-async def verify(req: VerifyRequest):
-    """
-    Verify a claim using government data sources and LLM analysis.
-    Args:
-        req: VerifyRequest containing the claim to verify
-    Returns:
-        Verification result with verdict, confidence, sources, and evidence
-    """
+async def verify(req: VerifyRequest) -> Dict[str, Any]:
     claim = (req.claim or "").strip()
     if not claim:
         raise HTTPException(status_code=400, detail="Claim cannot be empty.")
@@ -50,10 +47,10 @@ async def verify(req: VerifyRequest):
     analysis = {}
     all_results = []
     synthesis_result = {}
-    confidence_data = {}
+    confidence_breakdown: ConfidenceBreakdown = {}
+    confidence_scorer = ConfidenceScorer()
 
     try:
-        # Step 1: Analyze the claim and generate a plan for the API
         analysis = await analyze_claim_for_api_plan(claim)
         claim_norm = analysis.get("claim_normalized", claim)
         claim_type = analysis.get("claim_type", "Other")
@@ -61,7 +58,6 @@ async def verify(req: VerifyRequest):
 
         logger.info("Generated API Plan: %s", json.dumps(api_plan, indent=2))
 
-        # Step 2: Execute queries
         all_results = await execute_query_plan(api_plan, claim_type)
 
         sources_results = [r for r in all_results if isinstance(r, dict) and "error" not in r]
@@ -69,7 +65,6 @@ async def verify(req: VerifyRequest):
 
         logger.info(f"Retrieved {len(sources_results)} sources, encountered {len(debug_errors)} errors.")
 
-        # Step 3: Synthesize the findings
         synthesis_result = await synthesize_finding_with_llm(claim, analysis, sources_results)
         verdict = synthesis_result.get("verdict", "Inconclusive")
         summary_text = (
@@ -78,16 +73,14 @@ async def verify(req: VerifyRequest):
             .replace("..", ".")
         )
 
-        # Step 4: Compute confidence result
-        confidence_data = await compute_confidence(sources_results, verdict, claim_norm)
-        confidence_val = confidence_data.get("confidence", 0.0)
-
-        if confidence_val > 0.75:
-            confidence_tier = "High"
-        elif confidence_val > 0.5:
-            confidence_tier = "Medium"
-        else:
-            confidence_tier = "Low"
+        confidence_breakdown = await confidence_scorer.compute_confidence(
+            sources=sources_results,
+            verdict=verdict,
+            claim=claim_norm
+        )
+        confidence_val = confidence_breakdown["confidence"]
+        
+        confidence_tier = confidence_scorer.get_confidence_tier(confidence_val)
 
         end_time = asyncio.get_event_loop().time()
         duration = round(end_time - start_time, 2)
@@ -101,20 +94,21 @@ async def verify(req: VerifyRequest):
             "confidence": confidence_val,
             "confidence_tier": confidence_tier,
             "confidence_breakdown": {
-                "source_reliability": confidence_data.get("R", 0.0),
-                "evidence_density": confidence_data.get("E", 0.0),
-                "semantic_alignment": confidence_data.get("S", 0.0),
+                "source_reliability": confidence_breakdown.get("R", 0.0),
+                "evidence_density": confidence_breakdown.get("E", 0.0),
+                "semantic_alignment": confidence_breakdown.get("S", 0.0),
             },
             "summary": summary_text,
             "evidence_links": synthesis_result.get("evidence_links", []),
-            "sources": sources_results,
+            "sources": sources_results[:20],
             "debug_plan": analysis,
             "debug_log": debug_errors,
-            "debug_processing_time_seconds": duration,
         }
 
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.exception("Unhandled error during /verify processing for claim: %s", claim)
+        logger.exception("Unexpected error during verification.")
         return {
             "claim_original": claim,
             "claim_normalized": analysis.get("claim_normalized", claim),
@@ -122,8 +116,12 @@ async def verify(req: VerifyRequest):
             "verdict": "Error",
             "confidence": 0.0,
             "confidence_tier": "Low",
-            "confidence_breakdown": {"R": 0.0, "E": 0.0, "S": 0.0},
-            "summary": f"An unexpected internal server error occurred: {type(e).__name__}",
+            "confidence_breakdown": {
+                "source_reliability": 0.0,
+                "evidence_density": 0.0,
+                "semantic_alignment": 0.0,
+            },
+            "summary": f"An error occurred while processing this claim: {str(e)}",
             "evidence_links": [],
             "sources": [r for r in all_results if r and "error" not in r] if all_results else [],
             "debug_plan": analysis,

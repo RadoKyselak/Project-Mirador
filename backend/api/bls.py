@@ -7,15 +7,7 @@ from utils.parsing import parse_numeric_value
 
 
 async def query_bls(params: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """
-    Query the BLS API for labor statistics (CPI, unemployment).
-    
-    Args:
-        params: Dictionary containing metric and year parameters
-        
-    Returns:
-        List of result dictionaries containing BLS data
-    """
+
     if not BLS_API_KEY:
         return [{"error": "BLS_API_KEY missing", "source": "BLS", "status": "failed"}]
 

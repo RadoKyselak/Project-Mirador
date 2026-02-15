@@ -1,13 +1,14 @@
 import pytest
 from unittest.mock import AsyncMock, patch, MagicMock
 
+
 @pytest.mark.asyncio
 class TestQueryBea:
     """Tests for query_bea function."""
     
-    async def test_successful_query(self, mock_env_vars, sample_bea_response):
+    async def test_successful_query(self, sample_bea_response):
         """Test successful BEA API query."""
-        from main import query_bea
+        import main
         
         params = {
             "DataSetName": "NIPA",
@@ -31,7 +32,7 @@ class TestQueryBea:
             
             mock_client_class.return_value = mock_client
             
-            result = await query_bea(params)
+            result = await main.query_bea(params)
             
             assert len(result) == 1
             assert result[0]["title"] == "BEA: NIPA/T31600"
@@ -40,31 +41,32 @@ class TestQueryBea:
     
     async def test_missing_api_key(self, monkeypatch):
         """Test query_bea with missing API key."""
-        from main import query_bea
+        import main
         
-        monkeypatch.delenv("BEA_API_KEY", raising=False)
-        import importlib
-        import main as main_module
-        importlib.reload(main_module)
+        original_key = main.BEA_API_KEY
+        main.BEA_API_KEY = None
         
-        result = await main_module.query_bea({"LineCode": "2"})
+        result = await main.query_bea({"LineCode": "2"})
         assert result[0]["error"] == "BEA_API_KEY missing"
-    
-    async def test_missing_line_code(self, mock_env_vars):
-        """Test query_bea without LineCode."""
-        from main import query_bea
         
-        result = await query_bea({})
+        main.BEA_API_KEY = original_key
+    
+    async def test_missing_line_code(self):
+        """Test query_bea without LineCode."""
+        import main
+        
+        result = await main.query_bea({})
         assert "error" in result[0]
         assert "missing LineCode" in result[0]["error"]
+
 
 @pytest.mark.asyncio
 class TestQueryCensusAcs:
     """Tests for query_census_acs function."""
     
-    async def test_successful_query(self, mock_env_vars, sample_census_response):
+    async def test_successful_query(self, sample_census_response):
         """Test successful Census ACS query."""
-        from main import query_census_acs
+        import main
         
         params = {
             "year": "2021",
@@ -88,26 +90,26 @@ class TestQueryCensusAcs:
             
             mock_client_class.return_value = mock_client
             
-            result = await query_census_acs(params)
+            result = await main.query_census_acs(params)
             
             assert len(result) == 1
             assert "Alabama" in result[0]["title"]
             assert result[0]["data_value"] == 5024279.0
     
-    async def test_missing_required_params(self, mock_env_vars):
+    async def test_missing_required_params(self):
         """Test query_census_acs with missing required parameters."""
-        from main import query_census_acs
+        import main
         
-        result = await query_census_acs({"year": "2021"})
+        result = await main.query_census_acs({"year": "2021"})
         assert result == []
 
 @pytest.mark.asyncio
 class TestQueryBls:
     """Tests for query_bls function."""
     
-    async def test_successful_cpi_query(self, mock_env_vars, sample_bls_response):
+    async def test_successful_cpi_query(self, sample_bls_response):
         """Test successful BLS CPI query."""
-        from main import query_bls
+        import main
         
         params = {"metric": "CPI", "year": "2023"}
         
@@ -124,36 +126,37 @@ class TestQueryBls:
             
             mock_client_class.return_value = mock_client
             
-            result = await query_bls(params)
+            result = await main.query_bls(params)
             
             assert len(result) == 1
             assert "CPI" in result[0]["title"]
             assert result[0]["unit"] == "%"
             assert result[0]["data_value"] == pytest.approx(4.1, abs=0.1)
     
-    async def test_missing_metric(self, mock_env_vars):
+    async def test_missing_metric(self):
         """Test query_bls with missing metric."""
-        from main import query_bls
+        import main
         
-        result = await query_bls({"year": "2023"})
+        result = await main.query_bls({"year": "2023"})
         assert "error" in result[0]
         assert "missing metric" in result[0]["error"]
     
-    async def test_unsupported_metric(self, mock_env_vars):
+    async def test_unsupported_metric(self):
         """Test query_bls with unsupported metric."""
-        from main import query_bls
+        import main
         
-        result = await query_bls({"metric": "INVALID", "year": "2023"})
+        result = await main.query_bls({"metric": "INVALID", "year": "2023"})
         assert "error" in result[0]
         assert "not supported" in result[0]["error"]
+
 
 @pytest.mark.asyncio
 class TestQueryCongress:
     """Tests for query_congress function."""
     
-    async def test_successful_query(self, mock_env_vars):
+    async def test_successful_query(self):
         """Test successful Congress API query."""
-        from main import query_congress
+        import main
         
         mock_response_data = {
             "bills": [
@@ -180,26 +183,27 @@ class TestQueryCongress:
             
             mock_client_class.return_value = mock_client
             
-            result = await query_congress("CHIPS Act")
+            result = await main.query_congress("CHIPS Act")
             
             assert len(result) == 1
             assert "CHIPS Act" in result[0]["title"]
             assert "Passed Senate" in result[0]["snippet"]
     
-    async def test_empty_query(self, mock_env_vars):
+    async def test_empty_query(self):
         """Test query_congress with empty query."""
-        from main import query_congress
+        import main
         
-        result = await query_congress("")
+        result = await main.query_congress("")
         assert result == []
+
 
 @pytest.mark.asyncio
 class TestQueryDatagov:
     """Tests for query_datagov function."""
     
-    async def test_successful_query(self, mock_env_vars):
+    async def test_successful_query(self):
         """Test successful Data.gov API query."""
-        from main import query_datagov
+        import main
         
         mock_response_data = {
             "result": {
@@ -229,15 +233,15 @@ class TestQueryDatagov:
             
             mock_client_class.return_value = mock_client
             
-            result = await query_datagov("federal budget")
+            result = await main.query_datagov("federal budget")
             
             assert len(result) == 1
             assert "Federal Budget Dataset" in result[0]["title"]
             assert result[0]["url"] == "https://example.com/data.csv"
     
-    async def test_empty_query(self, mock_env_vars):
+    async def test_empty_query(self):
         """Test query_datagov with empty query."""
-        from main import query_datagov
+        import main
         
-        result = await query_datagov("")
+        result = await main.query_datagov("")
         assert result == []

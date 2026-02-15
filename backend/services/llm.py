@@ -1,3 +1,4 @@
+from config.constants import LLM_CONFIG
 import json
 from typing import Dict, Any, List, Optional
 import httpx
@@ -28,7 +29,7 @@ async def call_gemini(prompt: str) -> Dict[str, Any]:
         "contents": [{"role": "user", "parts": [{"text": prompt}]}],
     }
     try:
-        async with httpx.AsyncClient(timeout=60.0) as client:
+        async with httpx.AsyncClient(timeout=LLM_CONFIG.REQUEST_TIMEOUT) as client:
             response = await client.post(GEMINI_ENDPOINT, headers=headers, json=body)
             response.raise_for_status()
             data = response.json()
@@ -91,7 +92,7 @@ async def get_embeddings_batch_api(texts: List[str]) -> List[Optional[List[float
         batch_results = [None] * len(batch_texts)
 
         try:
-            async with httpx.AsyncClient(timeout=45.0) as client:
+            async with httpx.AsyncClient(timeout=LLM_CONFIG.BATCH_EMBED_TIMEOUT) as client:
                 r = await client.post(GEMINI_BATCH_EMBED_ENDPOINT, headers=headers, json=body)
                 r.raise_for_status()
                 data = r.json()

@@ -1,7 +1,7 @@
 import json
 from typing import Dict, Any, List
 import httpx
-
+from config.constants import API_TIMEOUTS
 from config import CENSUS_API_KEY, logger
 from utils.parsing import parse_numeric_value
 

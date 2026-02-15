@@ -14,7 +14,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(level
 logger = logging.getLogger(__name__)
 
 REQUIRED_KEYS = [
-    "GEMINI_API_KEY", "BEA_API_KEY", "CENSUS_API_KEY", "BLS_API_KEY", "CONGRESS_API_KEY"
+    "GEMINI_API_KEY", "BEA_API_KEY", "CENSUS_API_KEY", "BLS_API_KEY", "CONGRESS_API_KEY", "DATA_GOV_API_KEY"
 ]
 
 def check_api_keys_on_startup():
@@ -1122,5 +1122,6 @@ async def verify(req: VerifyRequest):
                 "status": "failed",
             }],
         }
+
 
 

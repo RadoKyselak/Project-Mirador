@@ -110,7 +110,7 @@ async def call_gemini(prompt: str) -> Dict[str, Any]:
     headers = {"Content-Type": "application/json", "x-goog-api-key": GEMINI_API_KEY}
     body = {
         "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-        }
+    }
 
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
@@ -127,7 +127,6 @@ async def call_gemini(prompt: str) -> Dict[str, Any]:
         logger.exception("Unexpected error calling Gemini API.")
         raise HTTPException(status_code=500, detail="Unexpected server error during LLM call.")
 
-
     text = ""
     try:
         if isinstance(data, dict):
@@ -138,11 +137,10 @@ async def call_gemini(prompt: str) -> Dict[str, Any]:
                 if isinstance(parts, list) and parts:
                     text = parts[0].get("text", "")
             if not text:
-                 text = data.get("output", "") or data.get("text", "")
+                text = data.get("output", "") or data.get("text", "")
     except (AttributeError, IndexError, TypeError) as e:
         logger.error("Error parsing Gemini response structure: %s. Response: %s", e, data)
         text = json.dumps(data)
-
 
     return {"raw": data, "text": text or json.dumps(data)}
 
@@ -1122,6 +1120,7 @@ async def verify(req: VerifyRequest):
                 "status": "failed",
             }],
         }
+
 
 
 

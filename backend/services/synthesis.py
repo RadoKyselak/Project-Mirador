@@ -1,6 +1,6 @@
 from typing import Dict, Any, List
 from fastapi import HTTPException
-
+from config.constants import LLM_CONFIG
 from config import logger
 from utils.parsing import extract_json_block
 from .llm import call_gemini
@@ -10,17 +10,7 @@ async def synthesize_finding_with_llm(
     claim_analysis: Dict[str, Any],
     sources: List[Dict[str, Any]]
 ) -> Dict[str, Any]:
-    """
-    Synthesize findings from sources to reach a verdict on the claim.
     
-    Args:
-        claim: Original user claim
-        claim_analysis: Analysis results from analyze_claim_for_api_plan
-        sources: List of source data from APIs
-        
-    Returns:
-        Dictionary containing verdict, summary, justification, and evidence links
-    """
     default_response = {
         "verdict": "Inconclusive",
         "summary": "Could not determine outcome based on available data.",
@@ -75,8 +65,8 @@ async def synthesize_finding_with_llm(
 
     context = "\n---\n".join(context_parts)
     MAX_CONTEXT_LENGTH = 30000
-    if len(context) > MAX_CONTEXT_LENGTH:
-        context = context[:MAX_CONTEXT_LENGTH] + "\n... [Context Truncated]"
+    if len(context) > LLM_CONFIG.MAX_CONTEXT_LENGTH:
+        context = context[:LLM_CONFIG.MAX_CONTEXT_LENGTH] + "\n... [Context Truncated]"
 
     prompt = f"""
     You are an objective fact-checker. Analyze the provided evidence from U.S. government sources against the user's claim.

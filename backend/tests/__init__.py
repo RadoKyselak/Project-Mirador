@@ -1,0 +1,12 @@
+[pytest]
+testpaths = tests
+python_files = test_*.py
+python_classes = Test*
+python_functions = test_*
+asyncio_mode = auto
+addopts = 
+    -v
+    --strict-markers
+    --cov=.
+    --cov-report=html
+    --cov-report=term-missing

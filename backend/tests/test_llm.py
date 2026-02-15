@@ -5,7 +5,10 @@ from fastapi import HTTPException
 
 @pytest.mark.asyncio
 class TestCallGemini:
-     async def test_successful_call(self, sample_gemini_response):
+    """Tests for call_gemini function."""
+    
+    async def test_successful_call(self, sample_gemini_response):
+        """Test successful Gemini API call."""
         import main
         
         with patch("main.GEMINI_API_KEY", "test_gemini_key"):
@@ -118,6 +121,7 @@ class TestGetEmbeddingsBatchApi:
     async def test_batch_size_limit(self):
         """Test that batching respects MAX_BATCH_SIZE."""
         import main
+        
         texts = [f"text{i}" for i in range(150)]
         
         call_count = 0

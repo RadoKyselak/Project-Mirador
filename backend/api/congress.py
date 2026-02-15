@@ -1,18 +1,9 @@
 from typing import Dict, Any, List
 import httpx
-
+from config.constants import API_TIMEOUTS
 from config import CONGRESS_API_KEY, logger
 
 async def query_congress(keyword_query: str) -> List[Dict[str, Any]]:
-    """
-    Query the Congress.gov API for bill information.
-    
-    Args:
-        keyword_query: Search query string for bills
-        
-    Returns:
-        List of result dictionaries containing Congress bill data
-    """
     if not CONGRESS_API_KEY:
         return [{"error": "CONGRESS_API_KEY missing", "source": "CONGRESS", "status": "failed"}]
     
@@ -23,7 +14,7 @@ async def query_congress(keyword_query: str) -> List[Dict[str, Any]]:
     url = "https://api.congress.gov/v3/bill"
 
     try:
-        async with httpx.AsyncClient(timeout=20.0) as client:
+        async with httpx.AsyncClient(timeout=API_TIMEOUTS.CONGRESS) as client:
             r = await client.get(url, params=params)
             r.raise_for_status()
             data = r.json()

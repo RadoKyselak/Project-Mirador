@@ -53,7 +53,7 @@ async def query_bls(params: Dict[str, Any]) -> List[Dict[str, Any]]:
     headers = {'Content-Type': 'application/json'}
 
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
+            async with httpx.AsyncClient(timeout=API_TIMEOUTS.BLS) as client:
             r = await client.post(url, headers=headers, content=payload)
             r.raise_for_status()
             data = r.json()

@@ -6,7 +6,7 @@ from config import logger
 from config.constants import CONFIDENCE_CONFIG
 from models.verdicts import VerificationResponse
 from models.confidence import ConfidenceBreakdown
-from domain.confidence import ConfidenceScorer
+from confidence.confidence_scorer import ConfidenceScorer
 from services import (
     analyze_claim_for_api_plan,
     execute_query_plan,

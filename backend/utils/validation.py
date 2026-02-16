@@ -6,7 +6,7 @@ class ValidationError(Exception):
     pass
 
 class InputValidator:
-
+    
     SQL_INJECTION_PATTERN = re.compile(
         r"(\b(SELECT|INSERT|UPDATE|DELETE|DROP|CREATE|ALTER|EXEC|EXECUTE|UNION|SCRIPT)\b)",
         re.IGNORECASE
@@ -23,29 +23,28 @@ class InputValidator:
     
     @staticmethod
     def sanitize_claim(claim: str) -> str:
-
         if not claim:
             raise ValidationError("Claim cannot be empty")
-
-        claim = claim.strip()     
-
+        
+        claim = claim.strip()
+        
         if len(claim) < 3:
             raise ValidationError("Claim must be at least 3 characters long")
         
         if len(claim) > 5000:
             raise ValidationError("Claim cannot exceed 5000 characters")
-
+        
         if InputValidator.SQL_INJECTION_PATTERN.search(claim):
             raise ValidationError("Claim contains suspicious SQL-like patterns")
-
+        
         for pattern in InputValidator.XSS_PATTERNS:
             if pattern.search(claim):
                 raise ValidationError("Claim contains suspicious HTML/JavaScript patterns")
-
+        
         claim = InputValidator.CONTROL_CHARS_PATTERN.sub('', claim)
-
+        
         claim = html.escape(claim)
-
+        
         claim = re.sub(r'\s+', ' ', claim)
         
         return claim

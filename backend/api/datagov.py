@@ -1,11 +1,18 @@
 from typing import Dict, List
 import httpx
 from config import logger
-from config.constants import API_TIMEOUTS
+from config.constants import API_TIMEOUTS, RATE_LIMITS_PER_SECOND
+from utils.retry import async_retry
+from utils.rate_limiter import get_rate_limiter
 
+_datagov_limiter = get_rate_limiter("DATA_GOV", RATE_LIMITS_PER_SECOND.DATA_GOV)
+
+@async_retry(max_attempts=3, exceptions=(httpx.HTTPError, httpx.TimeoutException))
 async def query_datagov(keyword_query: str) -> List[Dict[str, str]]:
     if not keyword_query or not keyword_query.strip():
         return []
+
+    await _datagov_limiter.acquire()
 
     url = "https://catalog.data.gov/api/3/action/package_search"
     params = {"q": keyword_query, "rows": 5}

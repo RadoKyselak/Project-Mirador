@@ -92,14 +92,14 @@ async def query_bls(params: Dict[str, Any]) -> List[Dict[str, Any]]:
                 return [{
                     "error": f"BLS missing annual average CPI data for {year_str} or {year_int-1}",
                     "source": "BLS",
-                    "status": "missing_data"
+                    "status": "failed"
                 }]
             if prev_val == 0:
                 logger.error(f"BLS CPI data for previous year {year_int-1} is zero, cannot calculate change.")
                 return [{
                     "error": f"BLS CPI data for {year_int-1} is zero, cannot calculate change.",
                     "source": "BLS",
-                    "status": "calculation_error"
+                    "status": "failed"
                 }]
 
             percent_change = ((current_val - prev_val) / prev_val) * 100
@@ -116,7 +116,7 @@ async def query_bls(params: Dict[str, Any]) -> List[Dict[str, Any]]:
                 return [{
                     "error": f"BLS missing annual average unemployment data for {year_str}",
                     "source": "BLS",
-                    "status": "missing_data"
+                    "status": "failed"
                 }]
 
             data_value = round(data_value, 1)

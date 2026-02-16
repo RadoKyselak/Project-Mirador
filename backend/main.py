@@ -37,7 +37,7 @@ async def health_check():
 
 
 @app.post("/verify")
-async def verify(req: VerifyRequest) -> Dict[str, Any]:
+async def verify(req: VerifyRequest) -> VerificationResponse:
     claim = (req.claim or "").strip()
     if not claim:
         raise HTTPException(status_code=400, detail="Claim cannot be empty.")
@@ -131,3 +131,4 @@ async def verify(req: VerifyRequest) -> Dict[str, Any]:
                 "status": "failed",
             }],
         }
+

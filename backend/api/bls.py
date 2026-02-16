@@ -68,13 +68,12 @@ async def query_bls(params: Dict[str, Any]) -> List[Dict[str, Any]]:
         series_data = data.get("Results", {}).get("series", [])
         if not series_data:
             logger.warning("BLS returned no data for series %s, years %s-%s", series_id, start_year, end_year)
-            return [{"error": "BLS returned no data for series", "source": "BLS", "status": "no_data"}]
-
+            return [{"error": "BLS returned no data for series", "source": "BLS", "status": "failed"}]
         annual_data = series_data[0].get("data", [])
+
         if not annual_data:
             logger.warning("BLS returned no annual data points for series %s, years %s-%s", series_id, start_year, end_year)
-            return [{"error": "BLS returned no annual data points", "source": "BLS", "status": "no_data"}]
-
+            return [{"error": "BLS returned no annual data", "source": "BLS", "status": "failed"}]
         year_values = {}
         for item in annual_data:
             if item.get("period") == "M13" and item.get("year") in [year_str, str(year_int - 1)]:

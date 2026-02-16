@@ -1,6 +1,6 @@
 from typing import Dict, Any, List
+from confidence.confidence_scorer import ConfidenceScorer
 from models.confidence import ConfidenceBreakdown
-from domain.confidence import ConfidenceScorer
 _scorer = ConfidenceScorer()
 
 async def compute_confidence(

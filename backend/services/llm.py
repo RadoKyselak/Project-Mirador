@@ -5,6 +5,8 @@ import httpx
 from fastapi import HTTPException
 from utils.retry import async_retry
 from utils.rate_limiter import get_rate_limiter
+from utils.circuit_breaker import circuit_breaker
+from exceptions import LLMException
 
 from config import (
     GEMINI_API_KEY,
@@ -16,11 +18,17 @@ from config import (
 
 _gemini_limiter = get_rate_limiter("GEMINI", RATE_LIMITS_PER_SECOND.GEMINI)
 
+@circuit_breaker(
+    failure_threshold=5,
+    recovery_timeout=60.0,
+    expected_exception=Exception,
+    name="gemini_llm"
+)
 @async_retry(max_attempts=3, exceptions=(httpx.HTTPError, httpx.TimeoutException))
 async def call_gemini(prompt: str) -> Dict[str, Any]:
     if not GEMINI_API_KEY:
         logger.critical("GEMINI_API_KEY not configured.")
-        raise HTTPException(status_code=500, detail="LLM API key not configured on server.")
+        raise LLMException("API key not configured", recoverable=False)
 
     await _gemini_limiter.acquire()
 
@@ -35,13 +43,14 @@ async def call_gemini(prompt: str) -> Dict[str, Any]:
             data = response.json()
     except httpx.HTTPStatusError as e:
         logger.error("Gemini HTTP error %s for URL %s: %s", e.response.status_code, e.request.url, e.response.text)
-        raise HTTPException(status_code=500, detail=f"LLM API error: Status {e.response.status_code}")
+        raise LLMException(f"HTTP {e.response.status_code}", recoverable=True)
     except httpx.RequestError as e:
         logger.error("Gemini request error for URL %s: %s", e.request.url, str(e))
-        raise HTTPException(status_code=500, detail=f"Error communicating with LLM: {str(e)}")
+        raise LLMException(f"Request failed: {str(e)}", recoverable=True)
     except Exception as e:
         logger.exception("Unexpected error calling Gemini API.")
-        raise HTTPException(status_code=500, detail="Unexpected server error during LLM call.")
+        raise LLMException(f"Unexpected error: {str(e)}", recoverable=False)
+    
     text = ""
     try:
         if isinstance(data, dict):

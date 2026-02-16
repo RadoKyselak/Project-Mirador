@@ -3,10 +3,13 @@ import json
 from typing import Dict, Any
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+
 from config import check_api_keys_on_startup, logger
 from models import VerifyRequest
 from models.verdicts import VerificationResponse
 from services.verification_service import VerificationService
+from utils.validation import ValidationError
 
 app = FastAPI(
     title="Stelthar API",
@@ -30,23 +33,21 @@ app.add_middleware(
 
 verification_service = VerificationService()
 
+@app.exception_handler(ValidationError)
+async def validation_exception_handler(request, exc):
+    return JSONResponse(
+        status_code=422,
+        content={"detail": str(exc), "type": "validation_error"}
+    )
+
 @app.get("/")
 async def health_check():
-    """Health check endpoint."""
     return {"status": "ok", "message": "Stelthar-API is running :)"}
 
 
 @app.post("/verify", response_model=VerificationResponse)
 async def verify(req: VerifyRequest) -> VerificationResponse:
-    """
-    Verify a user's claim against government data sources.
-    
-    Args:
-        req: Verification request containing the claim
-        
-    Returns:
-        Verification response with verdict, confidence, and evidence
-    """
+
     claim = req.claim.strip()
     if not claim:
         raise HTTPException(status_code=400, detail="Claim cannot be empty.")

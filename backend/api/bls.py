@@ -45,16 +45,15 @@ async def query_bls(params: Dict[str, Any]) -> List[Dict[str, Any]]:
     headers = {'Content-Type': 'application/json'}
 
     try:
-            async with httpx.AsyncClient(timeout=API_TIMEOUTS.BLS) as client:
+        async with httpx.AsyncClient(timeout=API_TIMEOUTS.BLS) as client:
             r = await client.post(url, headers=headers, content=payload)
             r.raise_for_status()
             data = r.json()
 
-        if data.get("status") != "REQUEST_SUCCEEDED":
-            message = data.get("message", ["Unknown BLS error."])[0]
-            logger.error(f"BLS API error: {message}")
-            return [{"error": f"BLS API error: {message}", "source": "BLS", "status": "failed"}]
-
+            if data.get("status") != "REQUEST_SUCCEEDED":
+                message = data.get("message", ["Unknown BLS error."])[0]
+                logger.error(f"BLS API error: {message}")
+                return [{"error": f"BLS API error: {message}", "source": "BLS", "status": "failed"}]
     except httpx.HTTPStatusError as e:
         logger.error("BLS HTTP error %s: %s", e.response.status_code, e.response.text)
         return [{"error": f"BLS API error: {e.response.status_code}", "source": "BLS", "status": "failed"}]

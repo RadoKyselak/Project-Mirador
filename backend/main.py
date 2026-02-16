@@ -14,7 +14,16 @@ from services import (
     execute_query_plan,
     synthesize_finding_with_llm,
 )
+@app.exception_handler(ValidationError)
+async def validation_exception_handler(request, exc):
+    return JSONResponse(
+        status_code=422,
+        content={"detail": str(exc), "type": "validation_error"}
+    )
 
+@app.post("/verify")
+async def verify(req: VerifyRequest) -> VerificationResponse:
+    claim = req.claim
 app = FastAPI()
 
 @app.on_event("startup")
@@ -131,4 +140,5 @@ async def verify(req: VerifyRequest) -> VerificationResponse:
                 "status": "failed",
             }],
         }
+
 

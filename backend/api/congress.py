@@ -1,14 +1,21 @@
 from typing import Dict, Any, List
 import httpx
-from config.constants import API_TIMEOUTS
+from config.constants import API_TIMEOUTS, RATE_LIMITS_PER_SECOND
 from config import CONGRESS_API_KEY, logger
+from utils.retry import async_retry
+from utils.rate_limiter import get_rate_limiter
 
+_congress_limiter = get_rate_limiter("CONGRESS", RATE_LIMITS_PER_SECOND.CONGRESS)
+
+@async_retry(max_attempts=3, exceptions=(httpx.HTTPError, httpx.TimeoutException))
 async def query_congress(keyword_query: str) -> List[Dict[str, Any]]:
     if not CONGRESS_API_KEY:
         return [{"error": "CONGRESS_API_KEY missing", "source": "CONGRESS", "status": "failed"}]
     
     if not keyword_query or not keyword_query.strip():
         return []
+
+    await _congress_limiter.acquire()
 
     params = {"api_key": CONGRESS_API_KEY, "q": keyword_query, "limit": 3}
     url = "https://api.congress.gov/v3/bill"

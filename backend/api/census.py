@@ -1,22 +1,20 @@
 import json
 from typing import Dict, Any, List
 import httpx
-from config.constants import API_TIMEOUTS
+from config.constants import API_TIMEOUTS, RATE_LIMITS_PER_SECOND
 from config import CENSUS_API_KEY, logger
 from utils.parsing import parse_numeric_value
+from utils.retry import async_retry
+from utils.rate_limiter import get_rate_limiter
 
+_census_limiter = get_rate_limiter("CENSUS", RATE_LIMITS_PER_SECOND.CENSUS)
+
+@async_retry(max_attempts=3, exceptions=(httpx.HTTPError, httpx.TimeoutException))
 async def query_census_acs(params: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """
-    Query the Census ACS API for demographic data.
-    
-    Args:
-        params: Dictionary containing year, dataset, get, and for parameters
-        
-    Returns:
-        List of result dictionaries containing Census data
-    """
     if not CENSUS_API_KEY:
         return [{"error": "CENSUS_API_KEY missing", "source": "CENSUS", "status": "failed"}]
+    
+    await _census_limiter.acquire()
     
     required_keys = ["year", "dataset", "get", "for"]
     if not all(k in params and params[k] for k in required_keys):

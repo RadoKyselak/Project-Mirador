@@ -1,8 +1,10 @@
-from config.constants import LLM_CONFIG
+from config.constants import LLM_CONFIG, RATE_LIMITS_PER_SECOND
 import json
 from typing import Dict, Any, List, Optional
 import httpx
 from fastapi import HTTPException
+from utils.retry import async_retry
+from utils.rate_limiter import get_rate_limiter
 
 from config import (
     GEMINI_API_KEY,
@@ -12,17 +14,15 @@ from config import (
     logger
 )
 
+_gemini_limiter = get_rate_limiter("GEMINI", RATE_LIMITS_PER_SECOND.GEMINI)
+
+@async_retry(max_attempts=3, exceptions=(httpx.HTTPError, httpx.TimeoutException))
 async def call_gemini(prompt: str) -> Dict[str, Any]:
-    """
-    Call the Gemini API with a prompt.
-    Args:
-        prompt: The text prompt to send to Gemini  
-    Returns:
-        Dictionary containing raw response and extracted text
-    """
     if not GEMINI_API_KEY:
         logger.critical("GEMINI_API_KEY not configured.")
         raise HTTPException(status_code=500, detail="LLM API key not configured on server.")
+
+    await _gemini_limiter.acquire()
 
     headers = {"Content-Type": "application/json", "x-goog-api-key": GEMINI_API_KEY}
     body = {
@@ -59,19 +59,15 @@ async def call_gemini(prompt: str) -> Dict[str, Any]:
     return {"raw": data, "text": text or json.dumps(data)}
 
 
+@async_retry(max_attempts=3, exceptions=(httpx.HTTPError, httpx.TimeoutException))
 async def get_embeddings_batch_api(texts: List[str]) -> List[Optional[List[float]]]:
-    """
-    Get embeddings for a batch of texts using Gemini Embedding API.
-    Args:
-        texts: List of text strings to embed   
-    Returns:
-        List of embedding vectors (or None for failed embeddings)
-    """
     if not GEMINI_API_KEY:
         logger.warning("GEMINI_API_KEY not configured. Cannot get embeddings.")
         return [None] * len(texts)
     if not texts:
         return []
+
+    await _gemini_limiter.acquire()
 
     headers = {"Content-Type": "application/json", "x-goog-api-key": GEMINI_API_KEY}
 

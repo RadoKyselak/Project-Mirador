@@ -4,7 +4,21 @@ import httpx
 from config.constants import API_TIMEOUTS, BEA_CONFIG
 from config import BEA_API_KEY, logger
 from utils.parsing import parse_numeric_value
+from utils.retry import async_retry
+from utils.rate_limiter import get_rate_limiter
+from config.constants import RATE_LIMITS_PER_SECOND
+import httpx
 
+_bea_limiter = get_rate_limiter("BEA", RATE_LIMITS_PER_SECOND.BEA)
+
+@async_retry(max_attempts=3, exceptions=(httpx.HTTPError, httpx.TimeoutException))
+async def call_gemini(prompt: str) -> Dict[str, Any]:
+    if not GEMINI_API_KEY:
+        logger.critical("GEMINI_API_KEY not configured.")
+        raise HTTPException(status_code=500, detail="LLM API key not configured on server.")
+
+    await _gemini_limiter.acquire()
+    
 async def query_bea(params: Dict[str, Any]) -> List[Dict[str, Any]]:
     if not BEA_API_KEY:
         return [{"error": "BEA_API_KEY missing", "source": "BEA", "status": "failed"}]

@@ -1,4 +1,5 @@
 from typing import TypedDict, Literal, List, Dict, Any
+from pydantic import BaseModel, validator, Field
 
 ClaimType = Literal[
     "Economic",
@@ -22,6 +23,21 @@ class ClaimAnalysis(TypedDict):
     relationship: str
     api_plan: APIQueryPlan
 
-class VerifyRequest(TypedDict):
-    """Request body for /verify endpoint."""
-    claim: str
+class VerifyRequest(BaseModel):
+    """Request body for /verify endpoint with validation."""
+    claim: str = Field(..., min_length=3, max_length=5000)
+    
+    @validator('claim')
+    def sanitize_claim(cls, v):
+        """Sanitize and validate claim input."""
+        from utils.validation import InputValidator
+
+        sanitized = InputValidator.sanitize_claim(v)
+        return sanitized
+    
+    class Config:
+        schema_extra = {
+            "example": {
+                "claim": "The unemployment rate in 2023 was 3.7%"
+            }
+        }

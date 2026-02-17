@@ -304,7 +304,7 @@ Any contributions you make are **greatly appreciated**.
 
 ## ⚠️ Disclaimer
 
-Project Mirador uses publicly available U.S. Government open data sources but is **not affiliated with or endorsed by any governmental agency**.
+Stelthar API uses publicly available U.S. Government open data sources but is **not affiliated with or endorsed by any governmental agency**.
 
 Verdicts and confidence scores are algorithmic estimates — they **assist, not replace, human judgment**. Always verify critical information through multiple sources.
 

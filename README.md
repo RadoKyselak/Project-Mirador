@@ -1,4 +1,4 @@
-# Project Mirador
+# Stelthar API
 
 <div align="center">
 
@@ -15,7 +15,7 @@
 
 **February 16, 2026** - Refractored code.
 
-**November 19, 2025** - The Project Mirador Chrome extension is now live on the Chrome Web Store!
+**November 19, 2025** - Project Mirador Chrome extension is now live on the Chrome Web Store!
 
 **Install:** Search for **"Project Mirador"** on the Chrome Web Store or use the link above.
 
@@ -43,7 +43,7 @@
 
 This repository contains the codebase for **Project Mirador** and the **Stelthar API**.
 
-Project Mirador provides real-time, government-backed data fact-checking for a better, more transparent version of the internet.
+Stelthar API provides real-time, government-backed data fact-checking for a better, more transparent version of the internet.
 
 ### The Problem
 

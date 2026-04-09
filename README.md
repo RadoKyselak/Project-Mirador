@@ -13,8 +13,6 @@
 
 ## 📢 Updates
 
-**February 16, 2026** - Refractored code.
-
 **November 19, 2025** - Project Mirador Chrome extension is now live on the Chrome Web Store!
 
 **Install:** Search for **"Project Mirador"** on the Chrome Web Store or use the link above.
@@ -59,12 +57,12 @@ Stelthar's fact-checking API verifies claims by comparing them against official 
 
 ## ✨ Key Features
 
-- ✅ **Real-time claim verification** against official government data sources
-- 🎯 **Evidence-based verdicts**: Supported, Contradicted, or Inconclusive
-- 📊 **Confidence scoring** that reflects data coverage and match quality
-- 🔗 **Direct links** to the primary sources used for verification
-- 🌐 **Browser extension integration** for on-page highlight-and-check functionality
-- 🔌 **API-first design** for easy integration into apps, dashboards, and extensions
+-  **Real-time claim verification** against official government data sources
+-  **Evidence-based verdicts**: Supported, Contradicted, or Inconclusive
+-  **Confidence scoring** that reflects data coverage and match quality
+-  **Direct links** to the primary sources used for verification
+-  **Browser extension integration** for on-page highlight-and-check functionality
+-  **API-first design** for easy integration into apps, dashboards, and extensions
 
 ---
 

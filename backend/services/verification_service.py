@@ -10,6 +10,7 @@ from confidence.confidence_scorer import ConfidenceScorer
 from services import (
     analyze_claim_for_api_plan,
     execute_query_plan,
+    fol_reason_about_claim,
     synthesize_finding_with_llm,
 )
 
@@ -46,8 +47,16 @@ class VerificationService:
                 f"Retrieved {len(sources_results)} sources, encountered {len(debug_errors)} errors."
             )
 
+            logic_result = fol_reason_about_claim(claim, analysis, sources_results)
             synthesis_result = await synthesize_finding_with_llm(claim, analysis, sources_results)
             verdict = synthesis_result.get("verdict", "Inconclusive")
+            if logic_result.get("verdict") in ("Supported", "Contradicted"):
+                verdict = logic_result["verdict"]
+                if logic_result.get("summary"):
+                    synthesis_result["summary"] = logic_result["summary"]
+                    synthesis_result["justification"] = ""
+                if logic_result.get("evidence_links"):
+                    synthesis_result["evidence_links"] = logic_result["evidence_links"]
             summary_text = (
                 f"{synthesis_result.get('summary','')}. {synthesis_result.get('justification','')}"
                 .strip()
@@ -60,6 +69,8 @@ class VerificationService:
                 claim=claim_norm
             )
             confidence_val = confidence_breakdown["confidence"]
+            if logic_result.get("verdict") == "Supported":
+                confidence_val = min(1.0, confidence_val + 0.1)
             
             confidence_tier = self.confidence_scorer.get_confidence_tier(confidence_val)
 

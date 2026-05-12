@@ -3,6 +3,7 @@ from .analysis import analyze_claim_for_api_plan
 from .synthesis import synthesize_finding_with_llm
 from .confidence import compute_confidence
 from .orchestration import execute_query_plan
+from .logic_verifier import fol_reason_about_claim
 
 __all__ = [
     "call_gemini",
@@ -11,4 +12,5 @@ __all__ = [
     "synthesize_finding_with_llm",
     "compute_confidence",
     "execute_query_plan",
+    "fol_reason_about_claim",
 ]
